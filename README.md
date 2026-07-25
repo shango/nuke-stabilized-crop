@@ -72,9 +72,27 @@ S:\nuke\
 
 ### 2. Get that folder onto the plugin path
 
-If the studio launches Nuke through a wrapper (`nukelauncher.exe` or similar),
-that wrapper is what sets the environment. Run this in the Script Editor of a
-session started the normal way, before deciding anything:
+**Try the free option first.** Some studio launchers glob the subfolders of the
+share and add each one, which is one way `gizmos\` and `toolsets\` load with no
+startup file present. If yours does, step 1 was the whole install. Restart Nuke
+through the launcher and check:
+
+```python
+import nuke
+for p in nuke.pluginPath():
+    if 'stabilized' in p.lower():
+        print("caught:", p)
+import stabilized_crop
+print(stabilized_crop.__file__)
+```
+
+If both print, stop here. Nuke itself does **not** recurse into subdirectories of
+the plugin path - it runs `init.py` then `menu.py` in each directory that is
+literally on the path - so this only works if the launcher does the globbing.
+
+If nothing prints, run this in the Script Editor of a session started the normal
+way. Whatever wrapper the studio launches Nuke through is what sets the
+environment, and this reports what it did:
 
 ```python
 import os
@@ -87,8 +105,26 @@ for path in nuke.pluginPath():
     print("   ", path)
 ```
 
-Then match the output to one of the three cases below. They are ordered by how
-little work they are, not by preference - any of them works.
+Then match the output to one of the cases below. They are ordered by how little
+work they are, not by preference - any of them works.
+
+#### If the share root itself is on the path
+
+For example the plugin path contains `S:/nuke`. Create `S:\nuke\init.py`:
+
+```python
+import nuke
+
+nuke.pluginAddPath('./stabilized_crop')
+```
+
+Calling `pluginAddPath` from inside an `init.py` executes the `init.py` in the
+directory being added, so this chains into `stabilized_crop/init.py`, which adds
+`./python`. The tool's `menu.py` runs in the later menu pass.
+
+Check whether `S:\nuke\init.py` already exists first, and **append** to it rather
+than overwriting. It is a shared facility file: every artist picks up the change
+at their next launch.
 
 #### If HOME points at the share
 
