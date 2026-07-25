@@ -72,32 +72,55 @@ S:\nuke\
 
 ### 2. Get that folder onto NUKE_PATH
 
-Only one of these is needed, and which one depends on how your facility already
-loads `gizmos\` and `toolsets\`.
-
-**If `NUKE_PATH` lists the sibling folders individually** (the likely setup when
-there is no shared `init.py`), append the new one the same way. Semicolon
-separated on Windows, colon on Linux/macOS:
-
-```
-NUKE_PATH=S:\nuke\gizmos;S:\nuke\toolsets;S:\nuke\stabilized_crop
-```
-
-**If there is a shared `.nuke` with startup files**, or you would rather not
-touch an environment variable, add one line to `S:\nuke\.nuke\init.py`:
-
-```python
-nuke.pluginAddPath('../stabilized_crop')
-```
-
-**If neither exists and you cannot change `NUKE_PATH`**, each artist adds one
-line to their own `~/.nuke/init.py` (`C:\Users\<you>\.nuke\init.py`):
+**The one-line option that always works**, regardless of how the facility is set
+up. Each workstation adds this to its own `~/.nuke/init.py`
+(`C:\Users\<you>\.nuke\init.py`, create the file if it does not exist):
 
 ```python
 nuke.pluginAddPath('S:/nuke/stabilized_crop')
 ```
 
-Forward slashes are fine on Windows and avoid backslash escaping.
+Forward slashes are fine on Windows and avoid backslash escaping. `~/.nuke` is
+always on the plugin path, so this needs no environment variable, no admin, and
+no knowledge of the existing setup. The cost is one line per workstation.
+
+**To do it once for everyone instead**, append the folder to `NUKE_PATH` wherever
+that is set (a wrapper script, a `.bat`, a system environment variable).
+Semicolon separated on Windows, colon on Linux/macOS:
+
+```
+NUKE_PATH=S:\nuke\gizmos;S:\nuke\toolsets;S:\nuke\stabilized_crop
+```
+
+Or, if any directory already on `NUKE_PATH` has an `init.py` you can edit, add a
+`pluginAddPath` line there pointing at this folder. A relative path resolves
+against that `init.py`, so from a sibling directory:
+
+```python
+nuke.pluginAddPath('../stabilized_crop')
+```
+
+#### Finding out which applies
+
+If you do not already know how `gizmos\` and `toolsets\` get loaded, paste this
+into the Script Editor on a working workstation. It answers the question
+outright:
+
+```python
+import os
+import nuke
+
+print("NUKE_PATH:", os.environ.get("NUKE_PATH"))
+print("HOME:     ", os.environ.get("HOME"))
+print("plugin path:")
+for path in nuke.pluginPath():
+    print("   ", path)
+```
+
+If the share's folders show up in `NUKE_PATH`, use the environment variable
+route. If they appear in the plugin path but *not* in `NUKE_PATH`, something is
+calling `pluginAddPath` already - most likely a local `~/.nuke/init.py` - and
+that file is the right place to add the line.
 
 ### 3. Set the menu location
 
