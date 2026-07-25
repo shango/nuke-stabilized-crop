@@ -32,7 +32,8 @@ nuke_stub.rotopaint = rp_stub
 sys.modules["nuke"] = nuke_stub
 sys.modules["nuke.rotopaint"] = rp_stub
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "stabilized_crop", "python"))
 import stabilized_crop as sc
 
 PLATE_W, PLATE_H = 1920, 1080

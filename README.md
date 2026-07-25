@@ -23,11 +23,16 @@ Requires Nuke 15.x / 16.x (tested against 16.0v8, Python 3.11). Likely fine on
 
 ## Files
 
-| file | purpose |
-|---|---|
-| `stabilized_crop.py` | **The tool. Self-contained - this is the only file you deploy.** |
-| `tests/test_solve.py` | Offline verification of the window solve and the round trip. Runs without Nuke. |
-| `reference/roto_to_bbox.py` | The original proof of concept this grew out of. Not imported by the tool; kept for provenance and because it still works standalone. |
+```
+stabilized_crop/            <- the deployable folder. Copy this whole thing.
+├── init.py                 adds ./python to the plugin path and sys.path
+├── menu.py                 registers the menu entry. Edit MENU_PATH here.
+└── python/
+    └── stabilized_crop.py  the tool itself, self-contained
+
+tests/test_solve.py         offline verification. Runs without Nuke.
+reference/roto_to_bbox.py   the proof of concept this grew out of. Not imported.
+```
 
 The world-space roto bbox math (`bvfx_roto_walker`, `bvfx_TTM`, `bvfx_TL`,
 `compute_baked_bbox_at_frame`) is inlined verbatim into `stabilized_crop.py` so
@@ -39,44 +44,87 @@ module by that name, so renaming it breaks every node already saved in a script.
 
 ## Install
 
-### Shared / facility path
-
-Nuke runs `init.py` then `menu.py` in every directory on the plugin path, and
-`nuke.pluginAddPath()` resolves relative paths against the `init.py` that calls
-it while also adding them to `sys.path`.
-
-```
-<shared>/
-├── .nuke/
-│   ├── init.py      add:  nuke.pluginAddPath('../python')
-│   └── menu.py      add:  import stabilized_crop
-│                          stabilized_crop.register_menu("MyStudio/Roto")
-└── python/
-    └── stabilized_crop.py
-```
-
-Adjust `'../python'` to `'./python'` if the directory on `NUKE_PATH` is the
-parent rather than the `.nuke` subfolder. `register_menu()` accepts a nested
-menu path and an optional keyboard shortcut:
+The `stabilized_crop/` folder is a self-contained Nuke plugin directory. It
+carries its own `init.py` and `menu.py`, so **nothing needs to be added to any
+shared startup file.** Nuke runs `init.py` then `menu.py` in every directory on
+the plugin path, and `init.py` here does the one thing that matters:
 
 ```python
-stabilized_crop.register_menu("MyStudio/Roto", shortcut="ctrl+alt+s")
+nuke.pluginAddPath('./python')
 ```
 
-Menu registration must go in `menu.py`, not `init.py` - `init.py` also runs in
-`nuke -t`, where there is no menu.
+Nuke resolves that relative path against the `init.py` calling it, and
+`pluginAddPath` also adds it to `sys.path`, which is what makes
+`import stabilized_crop` resolve for the node's button callbacks.
 
-**Do not use a `python/` subfolder if you skip the `pluginAddPath` line.** A
-`.py` module sitting in a `NUKE_PATH` root is not guaranteed to be importable:
-Nuke's plugin loader finds `init.py`/`menu.py` by its own mechanism, which is not
-Python's import path.
+### 1. Copy the folder to the share
 
-### Single user
+```
+S:\nuke\
+├── gizmos\
+├── toolsets\
+└── stabilized_crop\        <- copy the folder from this repo here
+    ├── init.py
+    ├── menu.py
+    └── python\
+        └── stabilized_crop.py
+```
 
-Drop `stabilized_crop.py` into `~/.nuke` (`C:\Users\<you>\.nuke` on Windows) and
-restart. That directory is on the plugin path automatically. Either add the
-`register_menu()` call to `~/.nuke/menu.py`, or just launch it from the Script
-Editor:
+### 2. Get that folder onto NUKE_PATH
+
+Only one of these is needed, and which one depends on how your facility already
+loads `gizmos\` and `toolsets\`.
+
+**If `NUKE_PATH` lists the sibling folders individually** (the likely setup when
+there is no shared `init.py`), append the new one the same way. Semicolon
+separated on Windows, colon on Linux/macOS:
+
+```
+NUKE_PATH=S:\nuke\gizmos;S:\nuke\toolsets;S:\nuke\stabilized_crop
+```
+
+**If there is a shared `.nuke` with startup files**, or you would rather not
+touch an environment variable, add one line to `S:\nuke\.nuke\init.py`:
+
+```python
+nuke.pluginAddPath('../stabilized_crop')
+```
+
+**If neither exists and you cannot change `NUKE_PATH`**, each artist adds one
+line to their own `~/.nuke/init.py` (`C:\Users\<you>\.nuke\init.py`):
+
+```python
+nuke.pluginAddPath('S:/nuke/stabilized_crop')
+```
+
+Forward slashes are fine on Windows and avoid backslash escaping.
+
+### 3. Set the menu location
+
+Edit the two constants at the top of `stabilized_crop/menu.py`:
+
+```python
+MENU_PATH = "Convert"      # nests with slashes, e.g. "MyStudio/Roto"
+SHORTCUT = ""              # e.g. "ctrl+alt+s"
+```
+
+Restart Nuke. The tool appears in the Nodes menu at `MENU_PATH`, and by Tab
+search.
+
+### Verifying it loaded
+
+```python
+import stabilized_crop
+print(stabilized_crop.__file__)
+```
+
+If that raises `ModuleNotFoundError`, step 2 did not take effect. Check
+`nuke.pluginPath()` for the folder.
+
+### Single user, no share
+
+Copy just `python/stabilized_crop.py` into `~/.nuke`
+(`C:\Users\<you>\.nuke`) and launch it from the Script Editor:
 
 ```python
 import stabilized_crop
