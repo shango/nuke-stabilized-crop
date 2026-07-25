@@ -102,8 +102,25 @@ check("oversize bbox reported as clipped", len(clipped) == 5,
       "clipped {} of 5".format(len(clipped)))
 mw, mh = sc._bbox_extremes(boxes)
 check("_bbox_extremes", (mw, mh) == (1200, 600), "{} x {}".format(mw, mh))
-fit_w = int(math.ceil(mw / 8.0) * 8)
-check("fit_res rounds up to /8", fit_w == 1200 and fit_w % 8 == 0, str(fit_w))
+fit_w, fit_h = sc._round_up(mw), sc._round_up(mh)
+check("fit_res rounds up to a multiple of RES_STEP",
+      fit_w % sc.RES_STEP == 0 and fit_h % sc.RES_STEP == 0,
+      "{} x {} (step {})".format(fit_w, fit_h, sc.RES_STEP))
+check("fit_res still contains the bbox", fit_w >= mw and fit_h >= mh,
+      "{}x{} contains {}x{}".format(fit_w, fit_h, mw, mh))
+check("fit_res does not overshoot by a whole step",
+      fit_w - mw < sc.RES_STEP and fit_h - mh < sc.RES_STEP,
+      "slack {} x {}".format(fit_w - mw, fit_h - mh))
+
+# --- 4b. every preset must satisfy the model's stride requirement -----------
+bad = []
+for preset in sc.RES_PRESETS:
+    if preset == "custom":
+        continue
+    pw, ph = (int(v) for v in preset.split(" x "))
+    if pw % sc.RES_STEP or ph % sc.RES_STEP:
+        bad.append(preset)
+check("all presets divisible by RES_STEP", bad == [], "offenders: {}".format(bad))
 
 # --- 5. res taller than the plate -> centred, symmetric overscan -----------
 boxes = [(f, 800, 400, 1000, 700) for f in range(1, 4)]

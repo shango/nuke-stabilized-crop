@@ -58,6 +58,12 @@ RES_PRESETS = [
 
 MODES = ["crop", "comp"]
 
+# "Set res to fit bbox" rounds up to a multiple of this. Latent diffusion models
+# work on an 8x downsampled latent and most UNets downsample a further 8x, so
+# dimensions off a multiple of 32 get silently padded or rejected. Every entry in
+# RES_PRESETS above is already a multiple of 64.
+RES_STEP = 32
+
 
 # ---------------------------------------------------------------------------
 # World-space roto bbox math, inlined verbatim from roto_to_bbox.py so this
@@ -449,15 +455,21 @@ def analyze(node):
     _apply(node)
 
 
+def _round_up(size, step=None):
+    """Smallest multiple of step that is >= size."""
+    step = RES_STEP if step is None else step
+    return int(math.ceil(size / float(step)) * step)
+
+
 def fit_res(node):
-    """Round the resolution up to contain the largest bbox, in steps of 8."""
+    """Round the resolution up to contain the largest bbox, in steps of RES_STEP."""
     boxes = _read_bbox(node)
     if not boxes:
         nuke.message("Press 'Analyze roto' first.")
         return
     max_w, max_h = _bbox_extremes(boxes)
-    node["res_w"].setValue(int(math.ceil(max_w / 8.0) * 8))
-    node["res_h"].setValue(int(math.ceil(max_h / 8.0) * 8))
+    node["res_w"].setValue(_round_up(max_w))
+    node["res_h"].setValue(_round_up(max_h))
     node["res_preset"].setValue("custom")
     _apply(node)
 

@@ -245,7 +245,7 @@ module present at all**. Nothing to install on render nodes.
 
 If the report shows `! bbox clipped on N of M frames`, your element is larger
 than the crop on those frames. **Set res to fit bbox** rounds up to the next
-multiple of 8 that contains it.
+multiple of 32 that contains it.
 
 ## Knobs
 
@@ -255,7 +255,7 @@ multiple of 8 that contains it.
 | `Analyze roto` | sample the bbox and cache it on the node. Re-run after editing roto shapes. |
 | `preset` | common model resolutions; sets the two fields below |
 | `resolution` w / h | crop size in pixels. The plate is **not** rescaled; this is the size of the window cut out of it. |
-| `Set res to fit bbox` | round up to the next multiple of 8 that contains the largest bbox |
+| `Set res to fit bbox` | round up to the next multiple of `RES_STEP` (32) that contains the largest bbox |
 | `mode` | `crop` renders to ComfyUI, `comp` puts the result back over the plate |
 | `matte grow` | dilate the comp-back matte, in pixels. Negative shrinks. |
 | `matte blur` | soften the comp-back matte edge |
@@ -269,6 +269,13 @@ saved in the `.nk`, which is why changing resolution does not re-sample.
 1:1. Nothing is rescaled, which is what keeps the round trip lossless. The
 tradeoff is that if your element is much smaller than the target resolution, the
 model spends most of its pixels on surrounding plate.
+
+**Resolution stride.** Latent diffusion models work on an 8x downsampled latent
+and most UNets downsample a further 8x, so dimensions off a multiple of 32 get
+silently padded or rejected. Every preset is a multiple of 64, and
+**Set res to fit bbox** rounds to `RES_STEP` (32, set at the top of
+`stabilized_crop.py`). The `resolution` fields themselves are not constrained -
+if you type an arbitrary number, that is what you get.
 
 **Edge handling.** The window is clamped to stay inside the plate, so near frame
 edges the element drifts within the crop rather than pulling in off-plate black.
