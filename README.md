@@ -70,6 +70,15 @@ S:\nuke\
         └── stabilized_crop.py
 ```
 
+`stabilized_crop.zip` in this repo holds exactly that folder and nothing else,
+for carrying to a machine that cannot reach GitHub. Unzip it directly into
+`S:\nuke\`. Rebuild it after changing the tool:
+
+```
+rm -f stabilized_crop.zip
+zip -r -X stabilized_crop.zip stabilized_crop -x '*__pycache__*'
+```
+
 ### 2. Get that folder onto the plugin path
 
 **Try the free option first.** Some studio launchers glob the subfolders of the
