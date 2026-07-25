@@ -70,41 +70,11 @@ S:\nuke\
         └── stabilized_crop.py
 ```
 
-### 2. Get that folder onto NUKE_PATH
+### 2. Get that folder onto the plugin path
 
-**The one-line option that always works**, regardless of how the facility is set
-up. Each workstation adds this to its own `~/.nuke/init.py`
-(`C:\Users\<you>\.nuke\init.py`, create the file if it does not exist):
-
-```python
-nuke.pluginAddPath('S:/nuke/stabilized_crop')
-```
-
-Forward slashes are fine on Windows and avoid backslash escaping. `~/.nuke` is
-always on the plugin path, so this needs no environment variable, no admin, and
-no knowledge of the existing setup. The cost is one line per workstation.
-
-**To do it once for everyone instead**, append the folder to `NUKE_PATH` wherever
-that is set (a wrapper script, a `.bat`, a system environment variable).
-Semicolon separated on Windows, colon on Linux/macOS:
-
-```
-NUKE_PATH=S:\nuke\gizmos;S:\nuke\toolsets;S:\nuke\stabilized_crop
-```
-
-Or, if any directory already on `NUKE_PATH` has an `init.py` you can edit, add a
-`pluginAddPath` line there pointing at this folder. A relative path resolves
-against that `init.py`, so from a sibling directory:
-
-```python
-nuke.pluginAddPath('../stabilized_crop')
-```
-
-#### Finding out which applies
-
-If you do not already know how `gizmos\` and `toolsets\` get loaded, paste this
-into the Script Editor on a working workstation. It answers the question
-outright:
+If the studio launches Nuke through a wrapper (`nukelauncher.exe` or similar),
+that wrapper is what sets the environment. Run this in the Script Editor of a
+session started the normal way, before deciding anything:
 
 ```python
 import os
@@ -117,10 +87,52 @@ for path in nuke.pluginPath():
     print("   ", path)
 ```
 
-If the share's folders show up in `NUKE_PATH`, use the environment variable
-route. If they appear in the plugin path but *not* in `NUKE_PATH`, something is
-calling `pluginAddPath` already - most likely a local `~/.nuke/init.py` - and
-that file is the right place to add the line.
+Then match the output to one of the three cases below. They are ordered by how
+little work they are, not by preference - any of them works.
+
+#### If HOME points at the share
+
+For example `HOME: S:\nuke`. Then `~/.nuke` **is** `S:\nuke\.nuke`, and that one
+directory is every artist's Nuke home at once. Create `S:\nuke\.nuke\init.py`
+(or append to it) with:
+
+```python
+nuke.pluginAddPath('S:/nuke/stabilized_crop')
+```
+
+One file, everyone gets it, no environment variable to change. Forward slashes
+are fine on Windows and avoid backslash escaping.
+
+#### If NUKE_PATH lists the share's folders
+
+Append this folder to it wherever the launcher sets it. Semicolon separated on
+Windows, colon on Linux/macOS:
+
+```
+NUKE_PATH=S:\nuke\gizmos;S:\nuke\toolsets;S:\nuke\stabilized_crop
+```
+
+Alternatively, if any directory already on `NUKE_PATH` has an `init.py` you can
+edit, add a `pluginAddPath` line there. A relative path resolves against that
+`init.py`, so from a sibling directory:
+
+```python
+nuke.pluginAddPath('../stabilized_crop')
+```
+
+#### If you cannot edit the launcher, or want to test first
+
+Add the same one-liner to your own `~/.nuke/init.py`
+(`C:\Users\<you>\.nuke\init.py`, create the file if it does not exist):
+
+```python
+nuke.pluginAddPath('S:/nuke/stabilized_crop')
+```
+
+`~/.nuke` is always on the plugin path, so this needs no environment variable and
+no admin rights. The cost is one line per workstation. Note that if `HOME` is
+redirected to the share, this is the same file as the first case - check the
+diagnostic output rather than assuming it is local.
 
 ### 3. Set the menu location
 
