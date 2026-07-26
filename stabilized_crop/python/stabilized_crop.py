@@ -37,6 +37,14 @@ import math
 import nuke
 import nuke.rotopaint as rp
 
+# Bump on release, and tag the repo to match.
+#   patch  behaviour fixes inside existing functions. Reach nodes already saved
+#          in scripts, because the buttons import this module at click time.
+#   minor  anything touching _build_internals or _add_knobs. Nodes already saved
+#          keep their old internals and need rebuilding to pick it up.
+#   major  renaming a public function or this file. Breaks saved nodes.
+__version__ = "1.0.0"
+
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
 
@@ -508,6 +516,11 @@ def analyze(node):
     _apply(node)
 
 
+def _version_label():
+    """Text stamped onto a node when it is built."""
+    return "StabilizedCrop v{}".format(__version__)
+
+
 def _round_up(size, step=None):
     """Smallest multiple of step that is >= size."""
     step = RES_STEP if step is None else step
@@ -599,8 +612,8 @@ def _add_knobs(group):
     add(nuke.PyScript_Knob(
         "fit_res", "Set res to fit bbox",
         "import stabilized_crop; stabilized_crop.fit_res(nuke.thisNode())"),
-        "Round the resolution up to the next multiple of 8 that contains the "
-        "largest bbox, so nothing is clipped.")
+        "Round the resolution up to the next multiple of {} that contains the "
+        "largest bbox, so nothing is clipped.".format(RES_STEP))
 
     add(nuke.Text_Knob("div_out", "output"))
 
@@ -614,6 +627,15 @@ def _add_knobs(group):
     add(nuke.Double_Knob("matte_blur", "matte blur"),
         "Soften the comp-back matte edge.")
     group["matte_blur"].setValue(2.0)
+
+    # Stamped once, at build time, and never updated. Names the version that
+    # built this node, which is not necessarily the version now installed:
+    # behaviour changes reach old nodes, structural ones do not. Called
+    # tool_version rather than version because some node classes already have
+    # a knob by that name.
+    add(nuke.Text_Knob("tool_version", "", _version_label()),
+        "Version of stabilized_crop.py that built this node. Compare with "
+        "stabilized_crop.__version__ to see what is installed.")
 
     # cached per-frame bbox, hidden but saved with the script
     add(nuke.XY_Knob("bbox_lo", "bbox lo"), invisible=True)

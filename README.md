@@ -113,6 +113,20 @@ says so rather than quietly moving your bake:
 ! plate is 4096 x 2160 but was analyzed at 1920 x 1080 - press Analyze roto
 ```
 
+## Versions
+
+Nodes carry the version that built them, at the bottom of the panel. What's
+installed is `stabilized_crop.__version__`. They can differ, and usually that's
+fine - the number tells you whether it matters:
+
+- **patch** - behaviour fixes. Old nodes pick these up automatically, since the
+  buttons import the module at click time. Just deploy.
+- **minor** - new or changed knobs and internals. Old nodes keep what they were
+  built with and need rebuilding.
+- **major** - a public function or the file itself got renamed. Saved nodes break.
+
+Tags on this repo match, so `v1.2.0` is a diff you can read.
+
 ## Notes
 
 **Native scale.** The crop is real plate pixels at 1:1, never rescaled, which is

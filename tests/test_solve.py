@@ -228,6 +228,14 @@ on_project, _c = sc._solve_windows(edge, 1024, 1024, PROJECT_W, PROJECT_H)
 check("wrong plate size really would move the window", on_plate != on_project,
       "{} vs {}".format(on_plate[0], on_project[0]))
 
+# --- 8. version discipline --------------------------------------------------
+# The git tag has to match __version__, so keep it parseable.
+parts = sc.__version__.split(".")
+check("__version__ is a semver triple",
+      len(parts) == 3 and all(p.isdigit() for p in parts), sc.__version__)
+check("version label is what gets stamped on a node",
+      sc._version_label() == "StabilizedCrop v" + sc.__version__, sc._version_label())
+
 print()
 if failures:
     print("{} FAILURE(S):".format(len(failures)))
