@@ -23,8 +23,14 @@ Nuke 15.x / 16.x. Probably fine on 13.x / 14.x.
 
 Copy the `stabilized_crop/` folder to wherever your studio keeps its Nuke stuff,
 say `S:\nuke\`. It carries its own `init.py` and `menu.py`, so it just needs to
-be on the plugin path. `stabilized_crop.zip` in this repo holds exactly that
-folder if you need to sneakernet it somewhere.
+be on the plugin path. `stabilized_crop.zip` in this repo holds that folder plus
+this README, if you need to sneakernet it somewhere. Rebuild it after changing
+the tool:
+
+```
+rm -f stabilized_crop.zip
+zip -r -X stabilized_crop.zip stabilized_crop README.md -x '*__pycache__*'
+```
 
 Restart Nuke and see if it got picked up for free - some launchers add every
 subfolder of the share:
