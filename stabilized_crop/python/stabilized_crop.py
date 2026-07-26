@@ -295,8 +295,8 @@ def _child(group, name):
     raise ValueError("'{}' has no internal node named '{}'".format(group.name(), name))
 
 
-def _plate_size(node):
-    """Format size of the plate input, falling back to the project format."""
+def _live_plate_size(node):
+    """Format size of the plate input right now, or the project format."""
     plate = node.input(0)
     if plate is not None:
         try:
@@ -307,6 +307,50 @@ def _plate_size(node):
             pass
     fmt = nuke.root().format()
     return int(fmt.width()), int(fmt.height())
+
+
+def _store_plate_size(node, width, height):
+    """Record the plate format the analysis was solved against."""
+    knob = node["plate_size"]
+    knob.setValue(float(width), 0)
+    knob.setValue(float(height), 1)
+
+
+def _read_plate_cache(node):
+    """Plate size recorded at Analyze time, or None if there isn't one.
+
+    Returns None for nodes built before this knob existed so they keep working
+    on the old live-input behaviour rather than erroring.
+    """
+    knob = node.knob("plate_size")
+    if knob is None:
+        return None
+    width, height = int(knob.value(0)), int(knob.value(1))
+    if width < 1 or height < 1:
+        return None
+    return width, height
+
+
+def _plate_size(node):
+    """Plate size for the solve. Returns (width, height, warning).
+
+    Prefers the size recorded at Analyze time over the live input. Plate size
+    only enters the math through clamping, but that is enough: without the
+    cache, disconnecting the plate falls back to the project format and
+    silently re-bakes the transforms against the wrong numbers. The cache never
+    changes on its own, so the bake can only move when Analyze is pressed.
+    """
+    cached = _read_plate_cache(node)
+    if cached is None:
+        width, height = _live_plate_size(node)
+        return width, height, ""
+
+    warning = ""
+    if node.input(0) is not None and _live_plate_size(node) != cached:
+        live_w, live_h = _live_plate_size(node)
+        warning = ("! plate is {} x {} but was analyzed at {} x {}"
+                   " - press Analyze roto".format(live_w, live_h, *cached))
+    return cached[0], cached[1], warning
 
 
 def _solve_windows(boxes, res_w, res_h, plate_w, plate_h):
@@ -378,7 +422,7 @@ def _apply(node):
         node["report_clip"].setValue("! resolution must be at least 1 x 1")
         return
 
-    plate_w, plate_h = _plate_size(node)
+    plate_w, plate_h, plate_warning = _plate_size(node)
     windows, clipped = _solve_windows(boxes, res_w, res_h, plate_w, plate_h)
 
     # Frame 1 of the solve defines the static crop box; every other frame is
@@ -413,6 +457,8 @@ def _apply(node):
     )
 
     warnings = []
+    if plate_warning:
+        warnings.append(plate_warning)
     if clipped:
         warnings.append("! bbox clipped on {} of {} frames (first {})".format(
             len(clipped), len(boxes), clipped[0]))
@@ -431,6 +477,12 @@ def analyze(node):
     roto = node.input(1)
     if roto is None:
         nuke.message("Connect a Roto or RotoPaint to the 'roto' input.")
+        return
+    # The window is clamped to the plate, so the solve is only meaningful with
+    # a plate to measure. Refusing here also keeps a project-format guess from
+    # being cached as though it were the real thing.
+    if node.input(0) is None:
+        nuke.message("Connect the plate to the 'plate' input before analyzing.")
         return
     if roto.Class() not in ("Roto", "RotoPaint"):
         nuke.message("'{}' is a {} - the roto input needs a Roto or RotoPaint.".format(
@@ -452,6 +504,7 @@ def analyze(node):
         return
 
     _store_bbox(node, samples)
+    _store_plate_size(node, *_live_plate_size(node))
     _apply(node)
 
 
@@ -565,6 +618,7 @@ def _add_knobs(group):
     # cached per-frame bbox, hidden but saved with the script
     add(nuke.XY_Knob("bbox_lo", "bbox lo"), invisible=True)
     add(nuke.XY_Knob("bbox_hi", "bbox hi"), invisible=True)
+    add(nuke.XY_Knob("plate_size", "plate size"), invisible=True)
 
 
 def _build_internals(group):

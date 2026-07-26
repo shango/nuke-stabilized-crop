@@ -138,6 +138,96 @@ check("crop box is static across frames", True,
 check("stabilize translate is integer",
       all(isinstance(ref[1] - w[1], int) for w in windows))
 
+# --- 7. plate size cache survives a disconnect -----------------------------
+# Regression: _apply runs on inputChange, so unplugging the plate used to fall
+# back to the project format and silently re-bake against the wrong numbers.
+PROJECT_W, PROJECT_H = 4096, 2160          # deliberately not the plate format
+
+
+class FakeFormat(object):
+    def __init__(self, width, height):
+        self._w, self._h = width, height
+
+    def width(self):
+        return self._w
+
+    def height(self):
+        return self._h
+
+
+class FakePlate(object):
+    def __init__(self, width, height):
+        self._fmt = FakeFormat(width, height)
+
+    def format(self):
+        return self._fmt
+
+
+class FakeKnob(object):
+    def __init__(self, values=(0.0, 0.0)):
+        self._values = list(values)
+
+    def value(self, index):
+        return self._values[index]
+
+    def setValue(self, value, index):
+        self._values[index] = value
+
+
+class FakeNode(object):
+    """Just enough node for _plate_size, _read_plate_cache, _store_plate_size."""
+
+    def __init__(self, cache=None, plate=None):
+        self._knobs = {}
+        if cache is not None:
+            self._knobs["plate_size"] = FakeKnob((float(cache[0]), float(cache[1])))
+        self._plate = plate
+
+    def knob(self, name):
+        return self._knobs.get(name)
+
+    def __getitem__(self, name):
+        return self._knobs[name]
+
+    def input(self, index):
+        return self._plate if index == 0 else None
+
+
+nuke_stub.root = lambda: types.SimpleNamespace(
+    format=lambda: FakeFormat(PROJECT_W, PROJECT_H))
+
+# a node predating the cache knob keeps the old live-input behaviour
+node = FakeNode(cache=None, plate=FakePlate(PLATE_W, PLATE_H))
+check("no cache falls back to the live input", sc._plate_size(node) == (PLATE_W, PLATE_H, ""),
+      str(sc._plate_size(node)))
+
+# the case that used to corrupt the bake
+node = FakeNode(cache=(PLATE_W, PLATE_H), plate=None)
+check("cached size survives plate disconnect",
+      sc._plate_size(node) == (PLATE_W, PLATE_H, ""),
+      "got {} (project format is {}x{})".format(sc._plate_size(node), PROJECT_W, PROJECT_H))
+
+node = FakeNode(cache=(PLATE_W, PLATE_H), plate=FakePlate(PLATE_W, PLATE_H))
+check("matching plate produces no warning", sc._plate_size(node) == (PLATE_W, PLATE_H, ""),
+      str(sc._plate_size(node)))
+
+node = FakeNode(cache=(PLATE_W, PLATE_H), plate=FakePlate(PROJECT_W, PROJECT_H))
+width, height, warning = sc._plate_size(node)
+check("swapped plate warns but does not move the bake",
+      (width, height) == (PLATE_W, PLATE_H) and warning.startswith("!"), warning)
+
+node = FakeNode(cache=(1, 1), plate=None)
+sc._store_plate_size(node, PLATE_W, PLATE_H)
+check("_store_plate_size round trips", sc._read_plate_cache(node) == (PLATE_W, PLATE_H),
+      str(sc._read_plate_cache(node)))
+
+# why the cache matters: plate size changes the solve whenever clamping engages
+edge = [(f, 1700, 900, 1900, 1060) for f in range(1, 4)]
+on_plate, _c = sc._solve_windows(edge, 1024, 1024, PLATE_W, PLATE_H)
+on_project, _c = sc._solve_windows(edge, 1024, 1024, PROJECT_W, PROJECT_H)
+check("wrong plate size really would move the window", on_plate != on_project,
+      "{} vs {}".format(on_plate[0], on_project[0]))
+
 print()
 if failures:
     print("{} FAILURE(S):".format(len(failures)))

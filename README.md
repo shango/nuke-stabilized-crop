@@ -252,7 +252,7 @@ multiple of 32 that contains it.
 | knob | what it does |
 |---|---|
 | `range` first / last | frames to sample the roto over |
-| `Analyze roto` | sample the bbox and cache it on the node. Re-run after editing roto shapes. |
+| `Analyze roto` | sample the bbox and cache it, with the plate format, on the node. Needs both plate and roto connected. Re-run after editing roto shapes. |
 | `preset` | common model resolutions; sets the two fields below |
 | `resolution` w / h | crop size in pixels. The plate is **not** rescaled; this is the size of the window cut out of it. |
 | `Set res to fit bbox` | round up to the next multiple of `RES_STEP` (32) that contains the largest bbox |
@@ -260,8 +260,36 @@ multiple of 32 that contains it.
 | `matte grow` | dilate the comp-back matte, in pixels. Negative shrinks. |
 | `matte blur` | soften the comp-back matte edge |
 
-The per-frame bbox is cached on hidden animated knobs (`bbox_lo`, `bbox_hi`) and
-saved in the `.nk`, which is why changing resolution does not re-sample.
+The per-frame bbox is cached on hidden animated knobs (`bbox_lo`, `bbox_hi`),
+and the plate format it was solved against on `plate_size`. All three are
+`INVISIBLE`, not `DO_NOT_WRITE`, so they save in the `.nk` and come back on load.
+That is why changing resolution does not re-sample.
+
+## Setting a node aside between crop and comp
+
+You can render the crop, disconnect everything, and come back weeks later.
+Nothing needs to be re-analyzed.
+
+Comp mode does not read the bbox cache at all. It renders through the baked
+`Matchmove` curve and the static crop box, which are ordinary internal node
+knobs saved with the script. The roto could be deleted entirely and the comp
+would still line up. Switching `mode` never triggers a re-solve.
+
+A re-solve happens only on `res_preset`, `resolution`, `range`, or an input
+change, and since the plate format is cached it produces identical numbers to
+the ones you rendered against. If you reconnect a **different** plate, the report
+says so and the bake is left alone until you press **Analyze roto**:
+
+```
+! plate is 4096 x 2160 but was analyzed at 1920 x 1080 - press Analyze roto
+```
+
+Re-analyzing is deterministic. Same roto, same range, same resolution and same
+plate format gives bit-identical curves - control points are evaluated per
+frame, then floored and ceiled to integers. The one input that can drift
+unnoticed is `range`, which is initialized from the project range when a node is
+built, so a *new* node made after the shot range changed will differ from an old
+one.
 
 ## Design notes
 
@@ -276,6 +304,14 @@ silently padded or rejected. Every preset is a multiple of 64, and
 **Set res to fit bbox** rounds to `RES_STEP` (32, set at the top of
 `stabilized_crop.py`). The `resolution` fields themselves are not constrained -
 if you type an arbitrary number, that is what you get.
+
+**Plate size is cached, not read live.** The window is clamped to the plate, so
+the plate's format is an input to the solve. It is recorded when you press
+Analyze and read from that cache afterwards. Reading it live would mean that
+unplugging the plate falls back to the project format and silently re-bakes the
+transforms against the wrong numbers - `_apply` runs on `inputChange`, so this
+needed no user action beyond pulling a pipe. Analyze refuses to run without a
+plate connected, so a project-format guess can never enter the cache.
 
 **Edge handling.** The window is clamped to stay inside the plate, so near frame
 edges the element drifts within the crop rather than pulling in off-plate black.
