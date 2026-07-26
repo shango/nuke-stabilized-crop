@@ -83,6 +83,40 @@ into the internal knobs. Nothing to install on render nodes.
 `! bbox clipped on N of M frames` means your element is bigger than the crop
 there. **Set res to fit bbox** rounds up to the next multiple of 32.
 
+## Multiple roto shapes
+
+Merging two Roto nodes and feeding in the Merge doesn't work - you'll get
+`'Merge1' is a Merge - the roto input needs a Roto or RotoPaint`. The sampler
+never renders anything, it reads shapes straight off the node:
+
+```python
+rotoRoot = rotoNode["curves"].rootLayer
+```
+
+A Merge has no `curves` knob, so there's nothing to read. That's the price of
+Analyze being instant and resolution-independent. Chaining Roto2 into Roto1
+doesn't help either - you get a combined *image*, but Roto1 still only knows
+about its own shapes.
+
+**Put all the shapes in one Roto node instead.** The walker recurses the whole
+layer tree, so one node holding ten shapes across nested layers already gives
+you a combined bbox. Select the shapes in one Roto's curve list, copy, paste
+into the other. They keep their own animation and per-shape transforms.
+
+Two things to watch:
+
+- **Everything in the node counts.** There's no way to exclude a shape, so a
+  garbage matte sitting in the same node will inflate your crop. Keep the bbox
+  roto clean and put anything that shouldn't drive it elsewhere.
+- **Node-level transforms don't travel.** A transform on the source Roto's root
+  layer or Transform tab stays behind when you copy shapes out. Per-shape
+  transforms are fine.
+
+If your shapes genuinely have to live in separate nodes, the two ways forward
+are more roto inputs unioned at sample time, or measuring a rendered alpha
+instead - which would work with any source but makes Analyze a real render.
+Neither is built; ask if you need one.
+
 ## Knobs
 
 | knob | what it does |
