@@ -130,9 +130,16 @@ including the mask you send to the model. These only affect the comp back.
 Feather in the Roto to match a genuinely soft edge, use these to hide the seam.
 
 **use plate alpha**  
-Comp mode only. Comps the result back through the plate's own alpha instead of
-the roto. Handy if your plate already arrives with a matte in it and the roto
-was only ever there to find the bounding box.
+Says the matte lives in the plate's alpha rather than the roto. It applies to
+both halves at once: the alpha on the crop you send out, and the matte the
+result comes back through. Handy when your plate already arrives with a matte in
+it and the roto was only ever there to find the bounding box, which means once
+you've analyzed you can unplug the roto entirely.
+
+It needs a real matte in the plate. If the plate has no alpha, nothing comps and
+you'll be looking at your untouched plate. Ticking **auto alpha** on the Read
+won't help, it just fills the alpha with solid white, which comps the whole crop
+rectangle back and leaves a visible box edge.
 
 **alpha only**  
 Crop mode only. Outputs the matte as black and white instead of the picture, so
@@ -157,8 +164,10 @@ re-analyzing. All the numbers are saved on the node.
 **Re-analyze after you change the roto.** Nothing watches your shapes, so if you
 tweak them, hit Analyze again.
 
-**The roto is only needed for Analyze.** After that you can unplug it. If you do,
-tick **use plate alpha**, otherwise comp mode has no matte to work with.
+**The roto is only needed for Analyze.** After that you can unplug it, as long as
+you tick **use plate alpha** so there's still a matte. Leave it unticked with no
+roto and you get an empty matte, which means a black `alpha only` render and a
+comp that shows your plate untouched.
 
 **Keep the plate connected.** The crop is clamped to the plate's size, so the
 node wants to know what it is. If you plug in a different plate it'll tell you
@@ -219,12 +228,12 @@ with an impulse filter, in both directions, which is what makes the round trip
 exact.
 
 ```
-in 0 plate ─┬─ AlphaCopy ─ Stabilize ─ CropWindow ─ CropSwitch ──┐
-in 1 roto  ─┤  (matte→α)   (int trans)  (res_w x h)  (alpha only) │
-            │                                                    ├─ OutSwitch ─ out
-            └─ MatteSource ─ MatteGrow ─ MatteBlur ─┐            │
-               (roto | plate α)                     ↓            │
-in 2 result ─── ResultPlace ─── Matchmove ───── CompMerge ────────┘
+in 0 plate ─┬─ AlphaCopy ─ CropAlpha ─ Stabilize ─ CropWindow ─ CropSwitch ──┐
+in 1 roto  ─┤  (matte→α)  (roto|plate) (int trans)  (res_w x h)  (alpha only) │
+            │                                                                ├─ OutSwitch ─ out
+            └─ MatteSource ─ MatteGrow ─ MatteBlur ─┐                        │
+               (roto|plate)                          ↓                       │
+in 2 result ─── ResultPlace ─── Matchmove ─────── CompMerge ──────────────────┘
 ```
 
 Offline checks, no Nuke needed:
@@ -254,7 +263,7 @@ against. Each is a one line fix:
 | crop output has no alpha | swap the `Copy` inputs in `_build_internals` |
 | `alpha only` gives a black frame | the `MatteOut` copy channels are wrong |
 | `matte grow` shrinks | negate the `Dilate` size expression |
-| `use plate alpha` inverted | swap the `MatteSource` switch inputs |
+| `use plate alpha` inverted | swap the `MatteSource` and `CropAlpha` switch inputs |
 | resolution stops updating live | `knobChanged` isn't firing; press **Analyze roto** |
 
 Nodes built before v1.3.0 have a bug where `matte grow` and `matte blur` do

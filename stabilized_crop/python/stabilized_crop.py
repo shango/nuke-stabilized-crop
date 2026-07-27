@@ -11,8 +11,10 @@ Builds a single Group node that:
   mode = crop         output is a fixed WxH stabilized crop of the plate,
                       with the roto matte carried in alpha
   mode = comp         output is the result placed back into plate space and
-                      comped over the plate through the roto matte, or the
-                      plate's own alpha if "use plate alpha" is on
+                      comped over the plate through the matte
+
+  "use plate alpha" swaps the matte from the roto to the plate's own alpha, on
+  both branches at once, so after Analyze the roto can be unplugged entirely.
 
 The bbox is sampled once from the roto control points (no rendering) and cached
 on hidden animated knobs, so changing the crop resolution re-solves instantly.
@@ -44,7 +46,7 @@ import nuke.rotopaint as rp
 #   minor  anything touching _build_internals or _add_knobs. Nodes already saved
 #          keep their old internals and need rebuilding to pick it up.
 #   major  renaming a public function or this file. Breaks saved nodes.
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
@@ -679,9 +681,9 @@ def _add_knobs(group):
     plate_alpha = nuke.Boolean_Knob("plate_alpha", "use plate alpha")
     plate_alpha.setFlag(nuke.STARTLINE)
     add(plate_alpha,
-        "Comp mode only. Mask the comp back with the plate's own alpha instead "
-        "of the roto, for plates that already arrive with a matte in them. The "
-        "crop output carries the roto matte either way.")
+        "The matte lives in the plate's alpha rather than the roto. Applies to "
+        "both the crop you send out and the comp back, so the roto is only "
+        "needed for Analyze. For plates that already arrive with a matte.")
 
     add(nuke.Int_Knob("matte_grow", "matte grow"),
         "Dilate the roto matte by this many pixels before comping the result "
@@ -720,8 +722,16 @@ def _build_internals(group):
         matte_copy["from0"].setValue("rgba.alpha")
         matte_copy["to0"].setValue("rgba.alpha")
 
+        # Same knob picks the matte for both branches, so "use plate alpha"
+        # means one thing everywhere: the matte lives in the plate, not the
+        # roto. 0 takes the roto matte copied in above, 1 leaves the plate's
+        # own alpha untouched.
+        crop_alpha = nuke.nodes.Switch(
+            name="CropAlpha", inputs=[matte_copy, plate], xpos=0, ypos=140)
+        crop_alpha["which"].setExpression("parent.plate_alpha")
+
         stabilize = nuke.nodes.Transform(
-            name="Stabilize", inputs=[matte_copy], xpos=0, ypos=180,
+            name="Stabilize", inputs=[crop_alpha], xpos=0, ypos=180,
             filter="impulse", label="lock bbox centre")
 
         crop = nuke.nodes.Crop(
