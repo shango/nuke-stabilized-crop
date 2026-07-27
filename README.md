@@ -132,6 +132,7 @@ Neither is built; ask if you need one.
 | `preset` | common model resolutions |
 | `resolution` w / h | crop size. The plate is **not** rescaled; this is the size of the window cut out of it. |
 | `Set res to fit bbox` | round up to a multiple of `RES_STEP` (32) that contains the largest bbox |
+| `offset` x / y | shift the crop window, in pixels. Applied before the plate clamp, so it can't drag in black. Animatable. |
 | `mode` | `crop` goes out to ComfyUI, `comp` brings it back |
 | `matte grow` | dilate the comp-back matte. Negative shrinks. |
 | `matte blur` | soften its edge |
@@ -181,6 +182,14 @@ fit button rounds to `RES_STEP`. The resolution fields themselves are free - typ
 **Edges.** The window slides inward to stay on the plate, so near frame edges the
 element drifts within the crop instead of dragging in off-plate black. Ask for a
 resolution bigger than the plate and it centres instead, and warns you.
+
+**Offset.** Use it when the bbox centre isn't where you want the element sitting
+in frame - more headroom, or the subject deliberately off-centre. It's applied
+before the plate clamp, so it can't pull in black either, and if a plate edge is
+eating some of it you get `! offset limited by plate edge on N of M frames`
+rather than a knob that silently does nothing. Animate it if you want the
+framing to drift; the round trip stays pixel exact because the same window
+position drives both directions.
 
 **Plate size is cached, not read live.** It's an input to the solve, since the
 window clamps to it. `_apply` runs on `inputChange`, so reading it live meant

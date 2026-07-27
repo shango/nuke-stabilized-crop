@@ -46,9 +46,10 @@ def check(label, cond, detail=""):
     print("{:4} {}  {}".format("ok" if cond else "FAIL", label, detail))
 
 
-def round_trip(boxes, res_w, res_h, plate_w=PLATE_W, plate_h=PLATE_H):
+def round_trip(boxes, res_w, res_h, plate_w=PLATE_W, plate_h=PLATE_H, offsets=None):
     """Mirror _apply's chain and assert plate -> crop -> plate is identity."""
-    windows, clipped = sc._solve_windows(boxes, res_w, res_h, plate_w, plate_h)
+    windows, clipped, _held = sc._solve_windows(
+        boxes, res_w, res_h, plate_w, plate_h, offsets)
     ref_x, ref_y = windows[0][1], windows[0][2]
     for frame, wx, wy in windows:
         stab_x, stab_y = ref_x - wx, ref_y - wy          # Stabilize.translate
@@ -223,12 +224,46 @@ check("_store_plate_size round trips", sc._read_plate_cache(node) == (PLATE_W, P
 
 # why the cache matters: plate size changes the solve whenever clamping engages
 edge = [(f, 1700, 900, 1900, 1060) for f in range(1, 4)]
-on_plate, _c = sc._solve_windows(edge, 1024, 1024, PLATE_W, PLATE_H)
-on_project, _c = sc._solve_windows(edge, 1024, 1024, PROJECT_W, PROJECT_H)
+on_plate, _c, _h = sc._solve_windows(edge, 1024, 1024, PLATE_W, PLATE_H)
+on_project, _c, _h = sc._solve_windows(edge, 1024, 1024, PROJECT_W, PROJECT_H)
 check("wrong plate size really would move the window", on_plate != on_project,
       "{} vs {}".format(on_plate[0], on_project[0]))
 
-# --- 8. version discipline --------------------------------------------------
+# --- 8. crop offset ---------------------------------------------------------
+# well inside the plate, so nothing clamps and the offset lands in full
+boxes = [(f, 800 + f, 400 + f, 1000 + f, 700 + f) for f in range(1, 11)]
+base, _c, _h = sc._solve_windows(boxes, 512, 512, PLATE_W, PLATE_H)
+shift = {f: (40, -25) for f in range(1, 11)}
+moved, _c, held = sc._solve_windows(boxes, 512, 512, PLATE_W, PLATE_H, shift)
+check("offset shifts the window by exactly the requested amount",
+      all((m[1] - b[1], m[2] - b[2]) == (40, -25) for b, m in zip(base, moved)),
+      "{} -> {}".format(base[0], moved[0]))
+check("unclamped offset is not reported as held", held == [], str(held))
+
+okay, _w, _c, bad = round_trip(boxes, 512, 512, offsets=shift)
+check("round trip identity survives an offset", okay, bad or "10 frames x 3 probes")
+
+# animated offset: a different shift on every frame, still pixel exact
+ramp = {f: (f * 7, -f * 3) for f in range(1, 11)}
+okay, windows, _c, bad = round_trip(boxes, 512, 512, offsets=ramp)
+check("round trip identity survives an animated offset", okay, bad or "")
+check("animated offset differs per frame", windows[0][1] != windows[-1][1] - 9,
+      "{} .. {}".format(windows[0], windows[-1]))
+
+# pushing into a plate edge: window holds, and it is reported
+edge = [(f, 60, 500, 260, 700) for f in range(1, 4)]
+held_windows, _c, held = sc._solve_windows(edge, 512, 512, PLATE_W, PLATE_H,
+                                           {f: (-400, 0) for f in range(1, 4)})
+check("offset into the plate edge is clamped", all(w[1] == 0 for w in held_windows),
+      str(held_windows[0]))
+check("clamped offset is reported", len(held) == 3, "held on {} of 3".format(len(held)))
+
+# a zero offset must be indistinguishable from no offset at all
+same, _c, held = sc._solve_windows(boxes, 512, 512, PLATE_W, PLATE_H,
+                                   {f: (0, 0) for f in range(1, 11)})
+check("zero offset changes nothing", same == base and held == [], str(same[0]))
+
+# --- 9. version discipline --------------------------------------------------
 # The git tag has to match __version__, so keep it parseable.
 parts = sc.__version__.split(".")
 check("__version__ is a semver triple",

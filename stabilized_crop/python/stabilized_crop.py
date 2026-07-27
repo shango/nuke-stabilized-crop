@@ -43,7 +43,7 @@ import nuke.rotopaint as rp
 #   minor  anything touching _build_internals or _add_knobs. Nodes already saved
 #          keep their old internals and need rebuilding to pick it up.
 #   major  renaming a public function or this file. Breaks saved nodes.
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
@@ -361,7 +361,30 @@ def _plate_size(node):
     return cached[0], cached[1], warning
 
 
-def _solve_windows(boxes, res_w, res_h, plate_w, plate_h):
+def _read_offsets(node, frames):
+    """Per-frame crop offset as {frame: (dx, dy)}, or None if there is none.
+
+    Read with valueAt so animating the offset works. Any per-frame integer
+    shift stays pixel exact, because the window position it produces drives
+    both directions of the round trip.
+
+    Returns None for nodes built before these knobs existed, and also when the
+    offset is zero everywhere, so an unused offset changes nothing.
+    """
+    x_knob, y_knob = node.knob("offset_x"), node.knob("offset_y")
+    if x_knob is None or y_knob is None:
+        return None
+
+    offsets = {}
+    for frame in frames:
+        offsets[frame] = (int(round(x_knob.valueAt(frame))),
+                          int(round(y_knob.valueAt(frame))))
+    if not any(dx or dy for dx, dy in offsets.values()):
+        return None
+    return offsets
+
+
+def _solve_windows(boxes, res_w, res_h, plate_w, plate_h, offsets=None):
     """Place a fixed res_w x res_h window on the bbox centre of every frame.
 
     The window is clamped to stay inside the plate, so near the frame edges the
@@ -369,27 +392,39 @@ def _solve_windows(boxes, res_w, res_h, plate_w, plate_h):
     the window is wider or taller than the plate it is centred instead, which is
     the only case that can introduce black.
 
-    Returns (windows, clipped_frames) where
+    offsets shifts the window, as {frame: (dx, dy)}. It is applied before the
+    clamp, so the crop still cannot leave the plate; frames where the plate edge
+    absorbed some of the shift come back in held_frames. Integer only, which is
+    what keeps the round trip pixel exact.
+
+    Returns (windows, clipped_frames, held_frames) where
         windows        - [(frame, win_x, win_y), ...] integer lower-left corners
         clipped_frames - frames whose bbox does not fit inside its window
+        held_frames    - frames where the plate edge limited a nonzero offset
     """
-    def _place(lo, hi, size, plate_size):
+    def _place(lo, hi, size, plate_size, offset):
+        """Returns (origin, was_clamped)."""
         centre = int(round((lo + hi) * 0.5))
-        origin = centre - size // 2
+        origin = centre - size // 2 + offset
         if size <= plate_size:
-            return max(0, min(plate_size - size, origin))
+            limited = max(0, min(plate_size - size, origin))
+            return limited, limited != origin
         # window bigger than the plate: centre it and accept the overscan
-        return (plate_size - size) // 2
+        return (plate_size - size) // 2 + offset, False
 
     windows = []
     clipped = []
+    held = []
     for frame, x, y, r, t in boxes:
-        win_x = _place(x, r, res_w, plate_w)
-        win_y = _place(y, t, res_h, plate_h)
+        off_x, off_y = offsets.get(frame, (0, 0)) if offsets else (0, 0)
+        win_x, held_x = _place(x, r, res_w, plate_w, off_x)
+        win_y, held_y = _place(y, t, res_h, plate_h, off_y)
         windows.append((frame, win_x, win_y))
         if x < win_x or y < win_y or r > win_x + res_w or t > win_y + res_h:
             clipped.append(frame)
-    return windows, clipped
+        if (off_x and held_x) or (off_y and held_y):
+            held.append(frame)
+    return windows, clipped, held
 
 
 def _bbox_extremes(boxes):
@@ -431,7 +466,9 @@ def _apply(node):
         return
 
     plate_w, plate_h, plate_warning = _plate_size(node)
-    windows, clipped = _solve_windows(boxes, res_w, res_h, plate_w, plate_h)
+    offsets = _read_offsets(node, [frame for frame, _x, _y, _r, _t in boxes])
+    windows, clipped, held = _solve_windows(
+        boxes, res_w, res_h, plate_w, plate_h, offsets)
 
     # Frame 1 of the solve defines the static crop box; every other frame is
     # translated so its window lands on that same box.
@@ -470,6 +507,9 @@ def _apply(node):
     if clipped:
         warnings.append("! bbox clipped on {} of {} frames (first {})".format(
             len(clipped), len(boxes), clipped[0]))
+    if held:
+        warnings.append("! offset limited by plate edge on {} of {} frames".format(
+            len(held), len(boxes)))
     if res_w > plate_w or res_h > plate_h:
         warnings.append("! res exceeds plate {} x {} - edges will be black".format(
             plate_w, plate_h))
@@ -556,7 +596,7 @@ def on_knob_changed():
     elif name in ("res_w", "res_h"):
         node["res_preset"].setValue("custom")
         _apply(node)
-    elif name in ("inputChange", "first", "last"):
+    elif name in ("inputChange", "first", "last", "offset_x", "offset_y"):
         _apply(node)
 
 
@@ -614,6 +654,13 @@ def _add_knobs(group):
         "import stabilized_crop; stabilized_crop.fit_res(nuke.thisNode())"),
         "Round the resolution up to the next multiple of {} that contains the "
         "largest bbox, so nothing is clipped.".format(RES_STEP))
+
+    add(nuke.Int_Knob("offset_x", "offset"),
+        "Shift the crop window right by this many pixels. Applied before the "
+        "clamp, so the crop still cannot leave the plate - the report says when "
+        "a plate edge is limiting it. Animatable.")
+    add(nuke.Int_Knob("offset_y", ""),
+        "Shift the crop window up by this many pixels.", same_line=True)
 
     add(nuke.Text_Knob("div_out", "output"))
 
