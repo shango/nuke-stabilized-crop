@@ -168,7 +168,7 @@ rather than quietly moving your crop.
 
 Copy the `stabilized_crop` folder somewhere your Nuke picks up, such as your
 studio share. It carries its own `init.py` and `menu.py`, so it only needs to be
-on the plugin path. `Stabilized_Crop.zip` in this repo has the folder and this
+on the plugin path. `stabilized_crop.zip` in this repo has the folder and this
 README together if you need to carry it somewhere.
 
 Restart Nuke and check whether it just worked, since some launchers add every
