@@ -8,10 +8,12 @@ Built for ComfyUI round trips, where the model wants an exact input size
 (1024x1024, 832x1216) rather than "bbox plus some padding".
 
 ```
-in 0 plate ─┬─ AlphaCopy ── Stabilize ── CropWindow ──────────┐
-in 1 roto  ─┘   (matte→α)   (int trans)  (res_w x res_h)      ├─ OutSwitch ─ out
-            └─ MatteGrow ─ MatteBlur ─┐                       │
-in 2 result ─── ResultPlace ─ Matchmove ─ CompMerge ───────────┘
+in 0 plate ─┬─ AlphaCopy ─ Stabilize ─ CropWindow ────────────┐
+in 1 roto  ─┤  (matte→α)   (int trans)  (res_w x res_h)       │
+            │                                                 ├─ OutSwitch ─ out
+            └─ MatteSource ─ MatteGrow ─ MatteBlur ─┐         │
+               (roto | plate α)                     ↓         │
+in 2 result ─── ResultPlace ─── Matchmove ───── CompMerge ─────┘
 ```
 
 The round trip is pixel exact. Every move in both directions is an integer
@@ -134,6 +136,7 @@ Neither is built; ask if you need one.
 | `Set res to fit bbox` | round up to a multiple of `RES_STEP` (32) that contains the largest bbox |
 | `offset` x / y | shift the crop window, in pixels. Applied before the plate clamp, so it can't drag in black. Animatable. |
 | `mode` | `crop` goes out to ComfyUI, `comp` brings it back |
+| `use plate alpha` | comp mode only. Mask the comp back with the plate's own alpha instead of the roto. |
 | `matte grow` | dilate the comp-back matte. Negative shrinks. |
 | `matte blur` | soften its edge |
 
@@ -221,6 +224,7 @@ running Nuke to check against. Each fails loudly and each is a one-line fix:
 | crop output has no alpha | swap the `Copy` inputs in `_build_internals` |
 | creation throws on `CompMerge` | a `Merge2` knob name is wrong: `output`, `bbox`, or `maskChannelInput` |
 | `matte grow` shrinks | negate the `Dilate` size expression |
+| `use plate alpha` inverted | swap the `MatteSource` switch inputs (`[roto, plate]`) |
 | resolution stops updating live | `knobChanged` isn't firing; press **Analyze roto** |
 
 ## Files

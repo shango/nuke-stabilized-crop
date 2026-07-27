@@ -11,7 +11,8 @@ Builds a single Group node that:
   mode = crop         output is a fixed WxH stabilized crop of the plate,
                       with the roto matte carried in alpha
   mode = comp         output is the result placed back into plate space and
-                      comped over the plate through the roto matte
+                      comped over the plate through the roto matte, or the
+                      plate's own alpha if "use plate alpha" is on
 
 The bbox is sampled once from the roto control points (no rendering) and cached
 on hidden animated knobs, so changing the crop resolution re-solves instantly.
@@ -43,7 +44,7 @@ import nuke.rotopaint as rp
 #   minor  anything touching _build_internals or _add_knobs. Nodes already saved
 #          keep their old internals and need rebuilding to pick it up.
 #   major  renaming a public function or this file. Breaks saved nodes.
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
@@ -668,6 +669,13 @@ def _add_knobs(group):
         "crop: render this to ComfyUI (matte is in alpha).\n"
         "comp: the 'result' input placed back over the plate.")
 
+    plate_alpha = nuke.Boolean_Knob("plate_alpha", "use plate alpha")
+    plate_alpha.setFlag(nuke.STARTLINE)
+    add(plate_alpha,
+        "Comp mode only. Mask the comp back with the plate's own alpha instead "
+        "of the roto, for plates that already arrive with a matte in them. The "
+        "crop output carries the roto matte either way.")
+
     add(nuke.Int_Knob("matte_grow", "matte grow"),
         "Dilate the roto matte by this many pixels before comping the result "
         "back. Negative shrinks it.")
@@ -722,8 +730,16 @@ def _build_internals(group):
             name="Matchmove", inputs=[place], xpos=400, ypos=260,
             filter="impulse", label="back into plate space")
 
+        # Which alpha masks the comp back. 0 = the roto, 1 = the plate's own
+        # alpha, for plates that arrive with a matte already in them. Comp mode
+        # only; the crop output always carries the roto matte.
+        matte_source = nuke.nodes.Switch(
+            name="MatteSource", inputs=[roto, plate], xpos=250, ypos=280)
+        matte_source["which"].setExpression("parent.plate_alpha")
+
         grow = nuke.nodes.Dilate(
-            name="MatteGrow", inputs=[roto], xpos=250, ypos=340, channels="alpha")
+            name="MatteGrow", inputs=[matte_source], xpos=250, ypos=340,
+            channels="alpha")
         grow["size"].setExpression("parent.matte_grow")
 
         soften = nuke.nodes.Blur(
