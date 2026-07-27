@@ -26,8 +26,8 @@ Usage
     stabilized_crop.create()          # or register_menu() once in menu.py
 
 Then plug in plate + roto, press "Analyze roto", set the resolution, render the
-output with mode = crop. To write the inpaint mask separately, add a Shuffle
-downstream that copies alpha into rgb - the matte travels in the crop's alpha.
+output with mode = crop. Tick "alpha only" and render again for the black and
+white mask; it is the same crop, so the two line up exactly.
 
 Self-contained - this is the only file you need to deploy. Targets Nuke 15.x /
 16.x.
@@ -44,7 +44,7 @@ import nuke.rotopaint as rp
 #   minor  anything touching _build_internals or _add_knobs. Nodes already saved
 #          keep their old internals and need rebuilding to pick it up.
 #   major  renaming a public function or this file. Breaks saved nodes.
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
@@ -669,6 +669,13 @@ def _add_knobs(group):
         "crop: render this to ComfyUI (matte is in alpha).\n"
         "comp: the 'result' input placed back over the plate.")
 
+    alpha_only = nuke.Boolean_Knob("alpha_only", "alpha only")
+    alpha_only.setFlag(nuke.STARTLINE)
+    add(alpha_only,
+        "Crop mode only. Output the matte as black and white instead of the "
+        "picture, so the same Write renders your mask. Same geometry as the "
+        "crop, because it is the same crop.")
+
     plate_alpha = nuke.Boolean_Knob("plate_alpha", "use plate alpha")
     plate_alpha.setFlag(nuke.STARTLINE)
     add(plate_alpha,
@@ -721,6 +728,19 @@ def _build_internals(group):
             name="CropWindow", inputs=[stabilize], xpos=0, ypos=260,
             crop=True, reformat=True, label="[value parent.res_w] x [value parent.res_h]")
 
+        # alpha_only = 1 pushes the matte into rgb so the same Write renders a
+        # black and white mask. Copy rather than Shuffle because Copy's knob
+        # names have been stable across versions and we already rely on them.
+        matte_out = nuke.nodes.Copy(
+            name="MatteOut", inputs=[crop, crop], xpos=150, ypos=330)
+        for index, channel in enumerate(("red", "green", "blue")):
+            matte_out["from{}".format(index)].setValue("rgba.alpha")
+            matte_out["to{}".format(index)].setValue("rgba.{}".format(channel))
+
+        crop_switch = nuke.nodes.Switch(
+            name="CropSwitch", inputs=[crop, matte_out], xpos=0, ypos=400)
+        crop_switch["which"].setExpression("parent.alpha_only")
+
         # --- comp-back branch -------------------------------------------------
         place = nuke.nodes.Transform(
             name="ResultPlace", inputs=[result], xpos=400, ypos=180,
@@ -759,7 +779,7 @@ def _build_internals(group):
         comp["maskChannelInput"].setValue("none")
 
         switch = nuke.nodes.Switch(
-            name="OutSwitch", inputs=[crop, comp], xpos=0, ypos=560)
+            name="OutSwitch", inputs=[crop_switch, comp], xpos=0, ypos=560)
         switch["which"].setExpression("parent.mode")
 
         nuke.nodes.Output(inputs=[switch], xpos=0, ypos=640)

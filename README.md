@@ -1,57 +1,192 @@
-# StabilizedCrop
+# Stabilized Crop
 
-A Nuke node that stabilizes and crops a fixed-resolution window around a rotod
-element, so you can send it out to an AI inpainting model and comp the result
-back over your plate.
+A Nuke node for prepping shots that are going out to an AI inpainting model,
+and for bringing the results back home again.
 
-Built for ComfyUI round trips, where the model wants an exact input size
-(1024x1024, 832x1216) rather than "bbox plus some padding".
+## Why you want it
+
+For any AI inpainting task, the first step is generally to roto the object
+you're replacing or altering, because the model needs that matte to know what
+it's working on.
+
+The trouble is that handing a model a full 4K plate to fix one small area is a
+waste. It gets distracted, it gets overloaded, and the bit you actually care
+about ends up with only a handful of pixels devoted to it. Models also expect
+specific input sizes, like 1024x1024, and you rarely get to choose.
+
+A stabilized crop solves both. You cut a fixed-size window out of the plate that
+follows your element around, so the model sees nothing but the area you're
+altering, at a resolution it likes, and your subject stays put in frame instead
+of flying around.
+
+This node builds that crop off the bounding box of your roto, then reverses the
+whole thing later to put the result back exactly where it came from.
+
+The round trip is lossless. Everything moves in whole pixels with no filtering,
+so the pixels that come back are the pixels that left.
+
+## To use
+
+Select the plate, select the roto node, then create the Stabilized Crop node and
+it will hook everything up for you. Order doesn't matter, it works out which is
+which. You can also wire it by hand: **input 0 is the plate, input 1 is the
+roto, input 2 is the result** you'll get back later.
+
+Then:
+
+1. Make sure the **range** fields cover your full clip, and click
+   **Analyze roto**. It reads the bounding box off your roto shapes, which takes
+   no time at all because nothing has to render.
+2. Pick a **preset** that makes sense. Often the bbox alone isn't enough
+   padding, so go a size up and give the model some context to work with.
+3. Use the **offset** controls to move the crop around if you need to.
+4. Add a Write node and you're set to deliver the crop.
+5. Tick **alpha only** and render again to deliver the matte.
+
+Later, when the patch comes back with the AI generated effect:
+
+6. Plug the returned clip into the **result** pipe.
+7. Flip the node from **crop** mode to **comp** mode.
+
+That's it. The result lands back over your plate, in the right place, through
+your matte.
+
+## A full run through
+
+Say you're removing a rig from a moving actor's shoulder on a 1920x1080 plate,
+frames 1001 to 1120.
+
+**Roto the rig.** Just enough to cover it. This matte is doing two jobs: telling
+the node where to put the crop, and telling the model what to paint.
+
+**Select the plate, then the roto, then make the node.** Everything is wired up.
+
+**Set the range to 1001 to 1120 and hit Analyze roto.** The report tells you the
+biggest your element ever gets, and how far it travels:
 
 ```
-in 0 plate ─┬─ AlphaCopy ─ Stabilize ─ CropWindow ────────────┐
-in 1 roto  ─┤  (matte→α)   (int trans)  (res_w x res_h)       │
-            │                                                 ├─ OutSwitch ─ out
-            └─ MatteSource ─ MatteGrow ─ MatteBlur ─┐         │
-               (roto | plate α)                     ↓         │
-in 2 result ─── ResultPlace ─── Matchmove ───── CompMerge ─────┘
+max bbox: 240 x 310 px     travel: 680 x 95 px
 ```
 
-The round trip is pixel exact. Every move in both directions is an integer
-translation with an impulse filter, so nothing ever gets resampled.
+**Pick a resolution.** Your element is 240x310, so 512x512 would technically fit,
+but the model would be looking at your rig filling the whole frame with no
+surrounding context. 1024x1024 gives it room to understand what it's blending
+into. Watch the report as you change it, and if you see
 
-Nuke 15.x / 16.x. Probably fine on 13.x / 14.x.
+```
+! bbox clipped on 12 of 120 frames
+```
+
+your element is bigger than the crop on those frames. Go up a size, or hit
+**Set res to fit bbox** and it'll pick one for you.
+
+**Check it in the viewer.** Mode is already on crop. You should see a 1024x1024
+window with your rig sitting nicely in the middle, staying put as you scrub.
+
+**Nudge it if you like.** If the rig is centred but you'd rather see more of the
+shoulder below it, dial **offset** y down a bit.
+
+**Write it out.** Hang a Write off the node, EXR, render.
+
+**Tick alpha only and render again**, to a second path. Same crop, same
+geometry, just the matte in black and white. That's your mask.
+
+**Off it goes to ComfyUI.** Feed it the crop and the mask.
+
+**When the patch comes back**, Read it in, plug it into the result input, flip
+mode to comp. You're looking at your original plate with the fix comped in, in
+the right place, at the right size.
+
+**Tidy the edge.** A couple of pixels of **matte blur** usually kills any seam.
+See below.
+
+## The other controls
+
+Most of the time you won't need these. When you do, here's what they're for.
+
+**offset x / y**  
+Shifts the crop window in pixels. Use it when the middle of your roto isn't
+where you want the element sitting, say you need more headroom, or the subject
+should sit off to one side. It's animatable, so you can drift the framing over a
+shot if you need to. The crop won't leave the plate, so if you push it into a
+frame edge it will hold there rather than pulling in black, and the report will
+say `! offset limited by plate edge` so you know that's what happened.
+
+**matte grow**  
+Grows or shrinks the matte used to comp the result back, in pixels. Negative
+shrinks. Grow it if you can see a rim of the original plate around your fix.
+Shrink it if the AI result has gone mushy right at its edges and you'd rather
+only take the good middle.
+
+**matte blur**  
+Softens the edge of that comp-back matte. Defaults to 2, which is usually enough
+to hide the join. A roto edge is a hard one pixel step, and the AI result never
+matches your plate perfectly at the boundary, so a hard edge turns every tiny
+mismatch into a visible line. A couple of pixels buries it.
+
+Worth knowing these two are not the same as feathering in the Roto node. Roto
+feather is part of the matte itself and goes everywhere the matte goes,
+including the mask you send to the model. These only affect the comp back.
+Feather in the Roto to match a genuinely soft edge, use these to hide the seam.
+
+**use plate alpha**  
+Comp mode only. Comps the result back through the plate's own alpha instead of
+the roto. Handy if your plate already arrives with a matte in it and the roto
+was only ever there to find the bounding box.
+
+**alpha only**  
+Crop mode only. Outputs the matte as black and white instead of the picture, so
+the same Write gives you your mask. It's the same crop, so the two always line
+up.
+
+**preset and resolution**  
+Presets are the common model sizes. If you type your own, keep it to a multiple
+of 32, because most models quietly pad or reject anything else. All the presets
+already are.
+
+**Set res to fit bbox**  
+Picks the smallest valid size that fits your element on every frame. A starting
+point rather than an answer, since it gives you no padding at all.
+
+## A few things worth knowing
+
+**You can put the node away and come back to it.** Render your crop, unplug
+everything, open the script next month, flip to comp mode. Nothing needs
+re-analyzing. All the numbers are saved on the node.
+
+**Re-analyze after you change the roto.** Nothing watches your shapes, so if you
+tweak them, hit Analyze again.
+
+**The roto is only needed for Analyze.** After that you can unplug it. If you do,
+tick **use plate alpha**, otherwise comp mode has no matte to work with.
+
+**Keep the plate connected.** The crop is clamped to the plate's size, so the
+node wants to know what it is. If you plug in a different plate it'll tell you
+rather than quietly moving your crop.
 
 ## Install
 
-Copy the `stabilized_crop/` folder to wherever your studio keeps its Nuke stuff,
-say `S:\nuke\`. It carries its own `init.py` and `menu.py`, so it just needs to
-be on the plugin path. `Stabilized_Crop.zip` in this repo holds that folder plus
-this README, if you need to sneakernet it somewhere. Rebuild it after changing
-the tool:
+Copy the `stabilized_crop` folder somewhere your Nuke picks up, such as your
+studio share. It carries its own `init.py` and `menu.py`, so it only needs to be
+on the plugin path. `Stabilized_Crop.zip` in this repo has the folder and this
+README together if you need to carry it somewhere.
 
-```
-rm -f Stabilized_Crop.zip
-zip -r -X Stabilized_Crop.zip stabilized_crop README.md -x '*__pycache__*'
-```
-
-Restart Nuke and see if it got picked up for free - some launchers add every
-subfolder of the share:
+Restart Nuke and check whether it just worked, since some launchers add every
+subfolder of the share automatically:
 
 ```python
 import stabilized_crop
 print(stabilized_crop.__file__)
 ```
 
-If that throws, Nuke needs telling. It runs `init.py` and `menu.py` in each
-directory literally on the plugin path and does not recurse, so add one line to
-any `init.py` that already runs - the share's, or your own `~/.nuke/init.py`
-(`C:\Users\<you>\.nuke\init.py`, create it if missing):
+If that errors, add one line to any `init.py` that already runs, or to your own
+`~/.nuke/init.py` (`C:\Users\<you>\.nuke\init.py`, create it if it isn't there):
 
 ```python
 nuke.pluginAddPath('S:/nuke/stabilized_crop')
 ```
 
-Not sure which `init.py` already runs? This tells you:
+Not sure which files already run? This will tell you:
 
 ```python
 import os, nuke
@@ -61,180 +196,69 @@ for path in nuke.pluginPath():
     print("   ", path)
 ```
 
-Watch for `HOME` pointing at the share. If it does, `~/.nuke` is a shared
-directory and one line there covers everyone. Set `MENU_PATH` in `menu.py` to
-put the tool wherever your menus live.
+If `HOME` points at the share, then `~/.nuke` is a shared folder and one line
+there covers everybody. Set `MENU_PATH` in `menu.py` to put the tool wherever
+your menus live.
 
-Two things worth knowing. Keep the filename `stabilized_crop.py` - the node's
-buttons import it by name, so renaming it breaks every node already saved.
-And pasting the file into the Script Editor is not the same as installing it:
-the code lands in `__main__`, the node builds, then every button fails with
-`ModuleNotFoundError`. Renders don't care either way, since the solve is baked
-into the internal knobs. Nothing to install on render nodes.
+Two things: don't rename `stabilized_crop.py`, because the node's buttons look
+for it by name and every saved node would break. And pasting the file into the
+Script Editor isn't the same as installing it, the node will build and then
+every button will fail. Render nodes need nothing installed, since the maths is
+baked into the node itself.
 
-## Use
+## Under the hood
 
-1. Select your plate and roto, make the node. It sorts out which is which.
-   By hand: **0 = plate, 1 = roto, 2 = result**.
-2. Set the **range**, press **Analyze roto**. It reads the bbox straight off the
-   control points, no rendering, and tells you `max bbox` and `travel`.
-3. Pick a **preset** or type a **resolution**. Re-solves instantly off the
-   cached bbox, so you can dial it in while watching the report.
-4. Leave **mode = crop** and look at it. Output is exactly your WxH, roto matte
-   in alpha.
-5. Hang a **Write** off it. Want a separate mono mask? Add a **Shuffle**
-   (alpha -> rgb) and a second Write.
-6. Render, run it through ComfyUI.
-7. **Read** the result back into input **2**, set **mode = comp**. It lands back
-   in plate space, comped through the roto matte.
+Skip this unless something looks wrong.
 
-`! bbox clipped on N of M frames` means your element is bigger than the crop
-there. **Set res to fit bbox** rounds up to the next multiple of 32.
-
-## Multiple roto shapes
-
-Merging two Roto nodes and feeding in the Merge doesn't work - you'll get
-`'Merge1' is a Merge - the roto input needs a Roto or RotoPaint`. The sampler
-never renders anything, it reads shapes straight off the node:
-
-```python
-rotoRoot = rotoNode["curves"].rootLayer
-```
-
-A Merge has no `curves` knob, so there's nothing to read. That's the price of
-Analyze being instant and resolution-independent. Chaining Roto2 into Roto1
-doesn't help either - you get a combined *image*, but Roto1 still only knows
-about its own shapes.
-
-**Put all the shapes in one Roto node instead.** The walker recurses the whole
-layer tree, so one node holding ten shapes across nested layers already gives
-you a combined bbox. Select the shapes in one Roto's curve list, copy, paste
-into the other. They keep their own animation and per-shape transforms.
-
-Two things to watch:
-
-- **Everything in the node counts.** There's no way to exclude a shape, so a
-  garbage matte sitting in the same node will inflate your crop. Keep the bbox
-  roto clean and put anything that shouldn't drive it elsewhere.
-- **Node-level transforms don't travel.** A transform on the source Roto's root
-  layer or Transform tab stays behind when you copy shapes out. Per-shape
-  transforms are fine.
-
-If your shapes genuinely have to live in separate nodes, the two ways forward
-are more roto inputs unioned at sample time, or measuring a rendered alpha
-instead - which would work with any source but makes Analyze a real render.
-Neither is built; ask if you need one.
-
-## Knobs
-
-| knob | what it does |
-|---|---|
-| `range` first / last | frames to sample the roto over |
-| `Analyze roto` | samples the bbox and caches it, with the plate format. Needs plate and roto connected. Re-run after editing shapes. |
-| `preset` | common model resolutions |
-| `resolution` w / h | crop size. The plate is **not** rescaled; this is the size of the window cut out of it. |
-| `Set res to fit bbox` | round up to a multiple of `RES_STEP` (32) that contains the largest bbox |
-| `offset` x / y | shift the crop window, in pixels. Applied before the plate clamp, so it can't drag in black. Animatable. |
-| `mode` | `crop` goes out to ComfyUI, `comp` brings it back |
-| `use plate alpha` | comp mode only. Mask the comp back with the plate's own alpha instead of the roto. |
-| `matte grow` | dilate the comp-back matte. Negative shrinks. |
-| `matte blur` | soften its edge |
-
-## Setting a node aside
-
-Render the crop, unplug everything, come back in a month. Nothing needs
-re-analyzing.
-
-Comp mode never reads the bbox cache - it runs off the baked `Matchmove` curve
-and crop box, which save with the script like any other knob. You could delete
-the roto and the comp would still line up. Changing `mode` doesn't re-solve.
-
-Re-analyzing is deterministic: same roto, same range, same resolution, same
-plate gives bit-identical curves. Plug in a *different* plate and the report
-says so rather than quietly moving your bake:
+The bounding box is read straight off the roto control points, with no
+rendering, and cached on the node. That's why changing resolution re-solves
+instantly. The window is placed on the box centre each frame, clamped to stay on
+the plate, and the first analyzed frame's window becomes a static Crop box that
+every other frame is translated onto. Every move is a whole number of pixels
+with an impulse filter, in both directions, which is what makes the round trip
+exact.
 
 ```
-! plate is 4096 x 2160 but was analyzed at 1920 x 1080 - press Analyze roto
+in 0 plate ─┬─ AlphaCopy ─ Stabilize ─ CropWindow ─ CropSwitch ──┐
+in 1 roto  ─┤  (matte→α)   (int trans)  (res_w x h)  (alpha only) │
+            │                                                    ├─ OutSwitch ─ out
+            └─ MatteSource ─ MatteGrow ─ MatteBlur ─┐            │
+               (roto | plate α)                     ↓            │
+in 2 result ─── ResultPlace ─── Matchmove ───── CompMerge ────────┘
 ```
 
-## Versions
-
-Nodes carry the version that built them, at the bottom of the panel. What's
-installed is `stabilized_crop.__version__`. They can differ, and usually that's
-fine - the number tells you whether it matters:
-
-- **patch** - behaviour fixes. Old nodes pick these up automatically, since the
-  buttons import the module at click time. Just deploy.
-- **minor** - new or changed knobs and internals. Old nodes keep what they were
-  built with and need rebuilding.
-- **major** - a public function or the file itself got renamed. Saved nodes break.
-
-Tags on this repo match, so `v1.2.0` is a diff you can read.
-
-## Notes
-
-**Native scale.** The crop is real plate pixels at 1:1, never rescaled, which is
-what keeps the round trip lossless. The tradeoff is that a small element leaves
-the model spending most of its pixels on surrounding plate.
-
-**Stride.** Latent models downsample 8x to the latent and most UNets another 8x,
-so off-32 sizes get padded or rejected. Every preset is a multiple of 64 and the
-fit button rounds to `RES_STEP`. The resolution fields themselves are free - type
-1000 and you get 1000.
-
-**Edges.** The window slides inward to stay on the plate, so near frame edges the
-element drifts within the crop instead of dragging in off-plate black. Ask for a
-resolution bigger than the plate and it centres instead, and warns you.
-
-**Offset.** Use it when the bbox centre isn't where you want the element sitting
-in frame - more headroom, or the subject deliberately off-centre. It's applied
-before the plate clamp, so it can't pull in black either, and if a plate edge is
-eating some of it you get `! offset limited by plate edge on N of M frames`
-rather than a knob that silently does nothing. Animate it if you want the
-framing to drift; the round trip stays pixel exact because the same window
-position drives both directions.
-
-**Plate size is cached, not read live.** It's an input to the solve, since the
-window clamps to it. `_apply` runs on `inputChange`, so reading it live meant
-that pulling the plate pipe fell back to the project format and silently rebaked
-everything. Analyze records it; nothing else touches it.
-
-**Reference frame.** The first analyzed frame's window becomes the static crop
-box. Every other frame is translated onto it.
-
-## Tests
+Offline checks, no Nuke needed:
 
 ```
 python3 tests/test_solve.py
 ```
 
-Runs without Nuke - the geometry has no Nuke dependency, so the test stubs it
-out. It checks the thing that actually matters: plate pixel -> stabilize -> crop
--> ResultPlace -> matchmove comes back to the same integer coordinate. Interior
-frames, both clamped edges, oversize bboxes, resolutions bigger than the plate,
-and the plate size cache.
+### Versions
 
-### Not yet run inside Nuke
+Nodes carry the version that built them, at the bottom of the panel.
+`stabilized_crop.__version__` is what's installed. They can differ, which is
+usually fine:
 
-The geometry is verified, but a few API details came from the docs without a
-running Nuke to check against. Each fails loudly and each is a one-line fix:
+- **patch** fixes reach old nodes on their own. Just deploy.
+- **minor** changes knobs or internals. Old nodes keep what they were built
+  with, so rebuild one to pick it up.
+- **major** breaks saved nodes.
+
+### If something looks wrong
+
+A few Nuke details were written from the docs without a running Nuke to test
+against. Each is a one line fix:
 
 | symptom | fix |
 |---|---|
 | crop output has no alpha | swap the `Copy` inputs in `_build_internals` |
-| `matte grow` / `matte blur` do nothing | the `CompMerge` mask knob is `maskChannelInput`, not `maskChannelMask`. Fixed in v1.3.0 - see below. |
+| `alpha only` gives a black frame | the `MatteOut` copy channels are wrong |
 | `matte grow` shrinks | negate the `Dilate` size expression |
-| `use plate alpha` inverted | swap the `MatteSource` switch inputs (`[roto, plate]`) |
+| `use plate alpha` inverted | swap the `MatteSource` switch inputs |
 | resolution stops updating live | `knobChanged` isn't firing; press **Analyze roto** |
 
-### Repairing a node built before v1.3.0
-
-`matte grow` and `matte blur` did nothing on nodes built by v1.2.0 or earlier.
-`CompMerge` was masking off its B input's alpha rather than its mask input, so
-the whole grow/blur branch was wired up and never read. It looked plausible,
-because B is the plate.
-
-Rebuilding the node fixes it. To repair one in place instead, select it and run:
+Nodes built before v1.3.0 have a bug where `matte grow` and `matte blur` do
+nothing. Rebuild the node, or select it and run:
 
 ```python
 import stabilized_crop as sc
@@ -246,20 +270,17 @@ merge["maskChannelInput"].setValue("none")
 ## Files
 
 ```
-stabilized_crop/            the deployable folder
-├── init.py                 puts ./python on the plugin path
-├── menu.py                 menu entry. Set MENU_PATH here.
+stabilized_crop/            the folder you deploy
+├── init.py
+├── menu.py                 set MENU_PATH here
 └── python/stabilized_crop.py
 
 tests/test_solve.py         offline checks
 reference/roto_to_bbox.py   the proof of concept this grew out of
 ```
 
-The roto bbox math is inlined verbatim into `stabilized_crop.py` so it ships as
-one file. Fix it in `reference/` and you have to port it across by hand.
-
 ## Credits
 
-The world-space roto bbox math comes from the `roto_to_bbox.py` proof of concept,
-coded live with Claude and ChatGPT for
+The world-space roto bbox maths comes from the `roto_to_bbox.py` proof of
+concept, coded live with Claude and ChatGPT for
 [this video](https://www.youtube.com/watch?v=lPamGg187Ac).
