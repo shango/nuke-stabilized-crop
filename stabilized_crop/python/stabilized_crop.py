@@ -44,7 +44,7 @@ import nuke.rotopaint as rp
 #   minor  anything touching _build_internals or _add_knobs. Nodes already saved
 #          keep their old internals and need rebuilding to pick it up.
 #   major  renaming a public function or this file. Breaks saved nodes.
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
@@ -752,7 +752,11 @@ def _build_internals(group):
             name="CompMerge", inputs=[plate, matchmove, soften],
             xpos=0, ypos=470, operation="copy", output="rgb", bbox="B side",
             label="result over plate through matte")
-        comp["maskChannelInput"].setValue("rgba.alpha")
+        # maskChannelMask reads the mask INPUT (soften, above). maskChannelInput
+        # would read B's own alpha instead, which silently bypasses the whole
+        # grow/blur branch - it looks like it works, because B is the plate.
+        comp["maskChannelMask"].setValue("rgba.alpha")
+        comp["maskChannelInput"].setValue("none")
 
         switch = nuke.nodes.Switch(
             name="OutSwitch", inputs=[crop, comp], xpos=0, ypos=560)

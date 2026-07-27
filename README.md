@@ -222,10 +222,26 @@ running Nuke to check against. Each fails loudly and each is a one-line fix:
 | symptom | fix |
 |---|---|
 | crop output has no alpha | swap the `Copy` inputs in `_build_internals` |
-| creation throws on `CompMerge` | a `Merge2` knob name is wrong: `output`, `bbox`, or `maskChannelInput` |
+| `matte grow` / `matte blur` do nothing | the `CompMerge` mask knob is `maskChannelInput`, not `maskChannelMask`. Fixed in v1.3.0 - see below. |
 | `matte grow` shrinks | negate the `Dilate` size expression |
 | `use plate alpha` inverted | swap the `MatteSource` switch inputs (`[roto, plate]`) |
 | resolution stops updating live | `knobChanged` isn't firing; press **Analyze roto** |
+
+### Repairing a node built before v1.3.0
+
+`matte grow` and `matte blur` did nothing on nodes built by v1.2.0 or earlier.
+`CompMerge` was masking off its B input's alpha rather than its mask input, so
+the whole grow/blur branch was wired up and never read. It looked plausible,
+because B is the plate.
+
+Rebuilding the node fixes it. To repair one in place instead, select it and run:
+
+```python
+import stabilized_crop as sc
+merge = sc._child(nuke.selectedNode(), "CompMerge")
+merge["maskChannelMask"].setValue("rgba.alpha")
+merge["maskChannelInput"].setValue("none")
+```
 
 ## Files
 
