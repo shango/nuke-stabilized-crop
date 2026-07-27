@@ -46,10 +46,12 @@ Then:
 Later, when the patch comes back with the AI generated effect:
 
 6. Plug the returned clip into the **result** pipe.
-7. Flip the node from **crop** mode to **comp** mode.
+7. Flip the node from **crop** mode to **uncrop** mode.
 
-That's it. The result lands back over your plate, in the right place, through
-your matte.
+You now have the patch sitting back where it came from, at full plate
+resolution, with the matte in alpha. Merge it over your plate however the shot
+needs. The node does no compositing itself, deliberately, so the edge treatment
+stays entirely yours.
 
 ## A full run through
 
@@ -94,11 +96,13 @@ geometry, just the matte in black and white. That's your mask.
 **Off it goes to ComfyUI.** Feed it the crop and the mask.
 
 **When the patch comes back**, Read it in, plug it into the result input, flip
-mode to comp. You're looking at your original plate with the fix comped in, in
-the right place, at the right size.
+mode to uncrop. You're looking at a full 1920x1080 frame, empty except for your
+patch sitting exactly where the crop came from, with the matte in alpha.
 
-**Tidy the edge.** A couple of pixels of **matte blur** usually kills any seam.
-See below.
+**Comp it.** Merge it over your plate, through that alpha or any other matte you
+like. A Dilate and a small Blur on the matte before the Merge will hide the
+join, which is a hard one pixel step otherwise. This is the part the node
+deliberately leaves to you.
 
 ## The other controls
 
@@ -112,39 +116,22 @@ shot if you need to. The crop won't leave the plate, so if you push it into a
 frame edge it will hold there rather than pulling in black, and the report will
 say `! offset limited by plate edge` so you know that's what happened.
 
-**matte grow**  
-Grows or shrinks the matte used to comp the result back, in pixels. Negative
-shrinks. Grow it if you can see a rim of the original plate around your fix.
-Shrink it if the AI result has gone mushy right at its edges and you'd rather
-only take the good middle.
-
-**matte blur**  
-Softens the edge of that comp-back matte. Defaults to 2, which is usually enough
-to hide the join. A roto edge is a hard one pixel step, and the AI result never
-matches your plate perfectly at the boundary, so a hard edge turns every tiny
-mismatch into a visible line. A couple of pixels buries it.
-
-Worth knowing these two are not the same as feathering in the Roto node. Roto
-feather is part of the matte itself and goes everywhere the matte goes,
-including the mask you send to the model. These only affect the comp back.
-Feather in the Roto to match a genuinely soft edge, use these to hide the seam.
-
 **use plate alpha**  
 Says the matte lives in the plate's alpha rather than the roto. It applies to
-both halves at once: the alpha on the crop you send out, and the matte the
-result comes back through. Handy when your plate already arrives with a matte in
+both modes at once: the alpha on the crop you send out, and the alpha on the
+uncrop that comes back. Handy when your plate already arrives with a matte in
 it and the roto was only ever there to find the bounding box, which means once
 you've analyzed you can unplug the roto entirely.
 
-It needs a real matte in the plate. If the plate has no alpha, nothing comps and
-you'll be looking at your untouched plate. Ticking **auto alpha** on the Read
-won't help, it just fills the alpha with solid white, which comps the whole crop
-rectangle back and leaves a visible box edge.
+It needs a real matte in the plate. If the plate has no alpha you get an empty
+one, and nothing to comp with downstream. Ticking **auto alpha** on the Read
+won't help, it just fills the alpha with solid white, which gives you the whole
+crop rectangle as your matte.
 
 **alpha only**  
-Crop mode only. Outputs the matte as black and white instead of the picture, so
-the same Write gives you your mask. It's the same crop, so the two always line
-up.
+Outputs the matte as black and white instead of the picture, so the same Write
+gives you your mask. Works in both modes: the crop's matte in crop mode, a full
+plate-resolution matte in uncrop.
 
 **preset and resolution**  
 Presets are the common model sizes. If you type your own, keep it to a multiple
@@ -158,7 +145,7 @@ point rather than an answer, since it gives you no padding at all.
 ## A few things worth knowing
 
 **You can put the node away and come back to it.** Render your crop, unplug
-everything, open the script next month, flip to comp mode. Nothing needs
+everything, open the script next month, flip to uncrop mode. Nothing needs
 re-analyzing. All the numbers are saved on the node.
 
 **Re-analyze after you change the roto.** Nothing watches your shapes, so if you
@@ -166,8 +153,8 @@ tweak them, hit Analyze again.
 
 **The roto is only needed for Analyze.** After that you can unplug it, as long as
 you tick **use plate alpha** so there's still a matte. Leave it unticked with no
-roto and you get an empty matte, which means a black `alpha only` render and a
-comp that shows your plate untouched.
+roto and you get an empty matte, which means a black `alpha only` render and an
+uncrop with nothing in its alpha.
 
 **Keep the plate connected.** The crop is clamped to the plate's size, so the
 node wants to know what it is. If you plug in a different plate it'll tell you
@@ -228,12 +215,16 @@ with an impulse filter, in both directions, which is what makes the round trip
 exact.
 
 ```
-in 0 plate ─┬─ AlphaCopy ─ CropAlpha ─ Stabilize ─ CropWindow ─ CropSwitch ──┐
-in 1 roto  ─┤  (matte→α)  (roto|plate) (int trans)  (res_w x h)  (alpha only) │
-            │                                                                ├─ OutSwitch ─ out
-            └─ MatteSource ─ MatteGrow ─ MatteBlur ─┐                        │
-               (roto|plate)                          ↓                       │
-in 2 result ─── ResultPlace ─── Matchmove ─────── CompMerge ──────────────────┘
+in 0 plate ─┬─ AlphaCopy ─ CropAlpha ─ Stabilize ─ CropWindow ──┐
+in 1 roto  ─┤  (matte→α)  (roto|plate) (int trans)  (res_w x h)   │
+            │                                                     ├─ OutSwitch ─┐
+            └─ MatteSource ─────────────────┐                     │             │
+               (roto|plate)                 ↓                     │             │
+in 2 result ─── ResultPlace ─ Matchmove ─ MatteApply ─ PlateFrame ─┘             │
+                (into stab)  (into plate)  (matte→α)  (plate format)            │
+                                                                                 │
+                                              AlphaOnlySwitch ─ out ─────────────┘
+                                              (matte as b/w)
 ```
 
 Offline checks, no Nuke needed:
@@ -251,7 +242,8 @@ usually fine:
 - **patch** fixes reach old nodes on their own. Just deploy.
 - **minor** changes knobs or internals. Old nodes keep what they were built
   with, so rebuild one to pick it up.
-- **major** breaks saved nodes.
+- **major** changes what the node does, so a rebuilt node behaves differently
+  from the one it replaces. Saved nodes carry on as they were.
 
 ### If something looks wrong
 
@@ -262,19 +254,13 @@ against. Each is a one line fix:
 |---|---|
 | crop output has no alpha | swap the `Copy` inputs in `_build_internals` |
 | `alpha only` gives a black frame | the `MatteOut` copy channels are wrong |
-| `matte grow` shrinks | negate the `Dilate` size expression |
 | `use plate alpha` inverted | swap the `MatteSource` and `CropAlpha` switch inputs |
+| uncrop comes out crop-sized | `PlateFrame`'s `reformat` or `box` is not taking |
 | resolution stops updating live | `knobChanged` isn't firing; press **Analyze roto** |
 
-Nodes built before v1.3.0 have a bug where `matte grow` and `matte blur` do
-nothing. Rebuild the node, or select it and run:
-
-```python
-import stabilized_crop as sc
-merge = sc._child(nuke.selectedNode(), "CompMerge")
-merge["maskChannelMask"].setValue("rgba.alpha")
-merge["maskChannelInput"].setValue("none")
-```
+Nodes built before v2.0.0 still comp internally and have `matte grow` and
+`matte blur`. They keep working as they always did, so shots in flight are safe.
+Rebuild a node to move it to the uncrop behaviour.
 
 ## Files
 

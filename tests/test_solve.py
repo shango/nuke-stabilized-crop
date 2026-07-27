@@ -263,7 +263,28 @@ same, _c, held = sc._solve_windows(boxes, 512, 512, PLATE_W, PLATE_H,
                                    {f: (0, 0) for f in range(1, 11)})
 check("zero offset changes nothing", same == base and held == [], str(same[0]))
 
-# --- 9. version discipline --------------------------------------------------
+# --- 9. returned patch size check -------------------------------------------
+class ResultNode(FakeNode):
+    """A node whose input 2 carries a returned patch of a given size."""
+
+    def __init__(self, size):
+        FakeNode.__init__(self)
+        self._result = FakePlate(*size) if size else None
+
+    def input(self, index):
+        return self._result if index == 2 else None
+
+
+check("matching result is silent",
+      sc._result_size_warning(ResultNode((1024, 1024)), 1024, 1024) == "",
+      repr(sc._result_size_warning(ResultNode((1024, 1024)), 1024, 1024)))
+check("no result connected is silent",
+      sc._result_size_warning(ResultNode(None), 1024, 1024) == "")
+warning = sc._result_size_warning(ResultNode((2048, 2048)), 1024, 1024)
+check("upscaled result is reported",
+      warning == "! result is 2048 x 2048, crop was 1024 x 1024", warning)
+
+# --- 10. version discipline -------------------------------------------------
 # The git tag has to match __version__, so keep it parseable.
 parts = sc.__version__.split(".")
 check("__version__ is a semver triple",
