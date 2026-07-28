@@ -263,12 +263,23 @@ same, _c, held = sc._solve_windows(boxes, 512, 512, PLATE_W, PLATE_H,
                                    {f: (0, 0) for f in range(1, 11)})
 check("zero offset changes nothing", same == base and held == [], str(same[0]))
 
-# --- 9. returned patch size check -------------------------------------------
+# --- 9. result input check --------------------------------------------------
+class FakeEnum(object):
+    """Enumeration_Knob.value() gives the label, not the index."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def value(self):
+        return self._value
+
+
 class ResultNode(FakeNode):
     """A node whose input 2 carries a returned patch of a given size."""
 
-    def __init__(self, size):
+    def __init__(self, size, mode="uncrop"):
         FakeNode.__init__(self)
+        self._knobs["mode"] = FakeEnum(mode)
         self._result = FakePlate(*size) if size else None
 
     def input(self, index):
@@ -276,13 +287,28 @@ class ResultNode(FakeNode):
 
 
 check("matching result is silent",
-      sc._result_size_warning(ResultNode((1024, 1024)), 1024, 1024) == "",
-      repr(sc._result_size_warning(ResultNode((1024, 1024)), 1024, 1024)))
-check("no result connected is silent",
-      sc._result_size_warning(ResultNode(None), 1024, 1024) == "")
-warning = sc._result_size_warning(ResultNode((2048, 2048)), 1024, 1024)
+      sc._result_warning(ResultNode((1024, 1024)), 1024, 1024) == "",
+      repr(sc._result_warning(ResultNode((1024, 1024)), 1024, 1024)))
+warning = sc._result_warning(ResultNode((2048, 2048)), 1024, 1024)
 check("upscaled result is reported",
       warning == "! result is 2048 x 2048, crop was 1024 x 1024", warning)
+
+# the whole point: uncrop with nothing to uncrop renders black with a live
+# alpha, which looks like a broken node unless the node says otherwise
+warning = sc._result_warning(ResultNode(None), 1024, 1024)
+check("missing result is reported in uncrop mode",
+      warning == "! nothing connected to the result input", repr(warning))
+
+# in crop mode the result input is not read, so neither complaint applies
+check("missing result is silent in crop mode",
+      sc._result_warning(ResultNode(None, mode="crop"), 1024, 1024) == "",
+      repr(sc._result_warning(ResultNode(None, mode="crop"), 1024, 1024)))
+check("wrong-sized result is silent in crop mode",
+      sc._result_warning(ResultNode((2048, 2048), mode="crop"), 1024, 1024) == "",
+      repr(sc._result_warning(ResultNode((2048, 2048), mode="crop"), 1024, 1024)))
+
+# the label has to match a real mode, or the check silently never fires
+check("uncrop is a real mode name", "uncrop" in sc.MODES, str(sc.MODES))
 
 # --- 10. version discipline -------------------------------------------------
 # The git tag has to match __version__, so keep it parseable.

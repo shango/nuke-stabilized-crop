@@ -52,7 +52,7 @@ import nuke.rotopaint as rp
 #   major  the node's contract changes, so a rebuilt node behaves differently
 #          from the one it replaces, or a public name moves and saved nodes
 #          break outright.
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
@@ -393,15 +393,26 @@ def _read_offsets(node, frames):
     return offsets
 
 
-def _result_size_warning(node, res_w, res_h):
-    """Flag a returned patch that is not the size that was sent out.
+def _result_warning(node, res_w, res_h):
+    """Flag a result input that cannot be put back the way it went out.
 
-    It is placed anyway, at whatever size it is, because guessing the intent
-    would mean resampling and that is the one thing this node never does.
+    Silent in crop mode, where the result input is not read at all and an empty
+    one is the normal state while the crop is still out at the model.
+
+    In uncrop mode an empty result input is worth saying out loud. The node
+    still renders: black where the patch should be, with the matte in alpha,
+    because the matte comes off the plate side of the tree. That reads as a
+    broken node rather than as a missing input.
+
+    A patch that is the wrong size is placed anyway, at whatever size it is,
+    because guessing the intent would mean resampling and that is the one thing
+    this node never does.
     """
+    if node["mode"].value() != "uncrop":
+        return ""
     result = node.input(2)
     if result is None:
-        return ""
+        return "! nothing connected to the result input"
     try:
         fmt = result.format()
         width, height = int(fmt.width()), int(fmt.height())
@@ -548,7 +559,7 @@ def _apply(node):
     if res_w > plate_w or res_h > plate_h:
         warnings.append("! res exceeds plate {} x {} - edges will be black".format(
             plate_w, plate_h))
-    result_warning = _result_size_warning(node, res_w, res_h)
+    result_warning = _result_warning(node, res_w, res_h)
     if result_warning:
         warnings.append(result_warning)
     node["report_clip"].setValue("     ".join(warnings))
@@ -634,7 +645,9 @@ def on_knob_changed():
     elif name in ("res_w", "res_h"):
         node["res_preset"].setValue("custom")
         _apply(node)
-    elif name in ("inputChange", "first", "last", "offset_x", "offset_y"):
+    elif name in ("inputChange", "first", "last", "offset_x", "offset_y", "mode"):
+        # "mode" changes nothing in the solve, but the result input is only
+        # reported on in uncrop mode, so flipping modes has to refresh it.
         _apply(node)
 
 
