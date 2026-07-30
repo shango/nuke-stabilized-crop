@@ -2,23 +2,27 @@
 StabilizedCrop - fixed-resolution stabilized crop for AI inpainting round trips.
 ================================================================================
 
-Builds a single Group node that:
+Builds a single Group node that does exactly two things:
 
   input 0  plate      the footage
-  input 1  roto       Roto / RotoPaint driving the bounding box
+  input 1  roto       Roto / RotoPaint, sampled by Analyze for its bounding box
   input 2  result     the sequence that comes back from ComfyUI
 
-  mode = crop         output is a fixed WxH stabilized crop of the plate,
-                      with the matte carried in alpha
+  mode = crop         output is a fixed WxH stabilized crop of the plate
   mode = uncrop       output is the result put back where it came from, at
-                      plate resolution, with the matte in alpha
+                      plate resolution
 
-This node does no compositing. Uncrop is the exact inverse of crop and nothing
-more, so you merge the reconstruction over your plate downstream, through
+Nothing else. The roto is only ever read by Analyze - it does not touch the
+picture, so the crop carries whatever channels the plate carries and the uncrop
+carries whatever the result carries. Both modes pass pixels straight through.
+
+There is no compositing and no matte handling. Uncrop is the exact inverse of
+crop, so you merge the reconstruction over your plate downstream, through
 whatever matte the shot actually needs.
 
-"use plate alpha" swaps the matte from the roto to the plate's own alpha, in
-both modes at once, so after Analyze the roto can be unplugged entirely.
+For the mask that goes out alongside the crop, copy this node and plug the roto
+into the copy's plate input. The cached bbox and the solve are identical, so the
+mask lines up with the picture exactly.
 
 The bbox is sampled once from the roto control points (no rendering) and cached
 on hidden animated knobs, so changing the crop resolution re-solves instantly.
@@ -31,9 +35,8 @@ Usage
     import stabilized_crop
     stabilized_crop.create()          # or register_menu() once in menu.py
 
-Then plug in plate + roto, press "Analyze roto", set the resolution, render the
-output with mode = crop. Tick "alpha only" and render again for the black and
-white mask; it is the same crop, so the two line up exactly.
+Then plug in plate + roto, press "Analyze roto", set the resolution, and render
+the output with mode = crop.
 
 Self-contained - this is the only file you need to deploy. Targets Nuke 15.x /
 16.x.
@@ -52,7 +55,7 @@ import nuke.rotopaint as rp
 #   major  the node's contract changes, so a rebuilt node behaves differently
 #          from the one it replaces, or a public name moves and saved nodes
 #          break outright.
-__version__ = "2.0.1"
+__version__ = "3.0.0"
 
 MENU_LABEL = "Stabilized Crop (fixed res)"
 SUBMENU_LABEL = "Convert"
@@ -400,9 +403,8 @@ def _result_warning(node, res_w, res_h):
     one is the normal state while the crop is still out at the model.
 
     In uncrop mode an empty result input is worth saying out loud. The node
-    still renders: black where the patch should be, with the matte in alpha,
-    because the matte comes off the plate side of the tree. That reads as a
-    broken node rather than as a missing input.
+    still renders, as an empty plate-sized frame, which reads as a broken node
+    rather than as a missing input.
 
     A patch that is the wrong size is placed anyway, at whatever size it is,
     because guessing the intent would mean resampling and that is the one thing
@@ -716,24 +718,9 @@ def _add_knobs(group):
     add(nuke.Text_Knob("div_out", "output"))
 
     add(nuke.Enumeration_Knob("mode", "mode", MODES),
-        "crop: the stabilized crop, to render out to ComfyUI.\n"
+        "crop: the stabilized crop of the plate, to render out to ComfyUI.\n"
         "uncrop: the 'result' input put back where it came from, at plate "
-        "resolution, with the matte in alpha. Comp it yourself downstream.")
-
-    alpha_only = nuke.Boolean_Knob("alpha_only", "alpha only")
-    alpha_only.setFlag(nuke.STARTLINE)
-    add(alpha_only,
-        "Output the matte as black and white instead of the picture, so the "
-        "same Write renders your mask. Works in both modes: the crop's matte "
-        "in crop mode, the plate-resolution matte in uncrop.")
-
-    plate_alpha = nuke.Boolean_Knob("plate_alpha", "use plate alpha")
-    plate_alpha.setFlag(nuke.STARTLINE)
-    add(plate_alpha,
-        "The matte lives in the plate's alpha rather than the roto. Applies to "
-        "both modes, so the roto is only needed for Analyze. For plates that "
-        "already arrive with a matte.")
-
+        "resolution. Merge it over your plate yourself downstream.")
 
     # Stamped once, at build time, and never updated. Names the version that
     # built this node, which is not necessarily the version now installed:
@@ -755,26 +742,19 @@ def _build_internals(group):
     group.begin()
     try:
         plate = nuke.nodes.Input(name="plate", number=0, xpos=0, ypos=0)
-        roto = nuke.nodes.Input(name="roto", number=1, xpos=150, ypos=0)
+
+        # Deliberately feeds nothing. Analyze reads the shapes off this input
+        # directly, in Python, so the roto never enters the picture tree.
+        nuke.nodes.Input(name="roto", number=1, xpos=200, ypos=0)
+
         result = nuke.nodes.Input(name="result", number=2, xpos=400, ypos=0)
 
-        # Carry the roto matte in alpha so it travels through the exact same
-        # stabilize + crop as the plate. Copy input 0 is B, input 1 is A.
-        matte_copy = nuke.nodes.Copy(
-            name="AlphaCopy", inputs=[plate, roto], xpos=0, ypos=100)
-        matte_copy["from0"].setValue("rgba.alpha")
-        matte_copy["to0"].setValue("rgba.alpha")
-
-        # Same knob picks the matte for both branches, so "use plate alpha"
-        # means one thing everywhere: the matte lives in the plate, not the
-        # roto. 0 takes the roto matte copied in above, 1 leaves the plate's
-        # own alpha untouched.
-        crop_alpha = nuke.nodes.Switch(
-            name="CropAlpha", inputs=[matte_copy, plate], xpos=0, ypos=140)
-        crop_alpha["which"].setExpression("parent.plate_alpha")
-
+        # --- crop branch ------------------------------------------------------
+        # The plate, translated so the bbox centre sits still, then cut to the
+        # requested resolution. Whatever channels the plate carries come through
+        # untouched.
         stabilize = nuke.nodes.Transform(
-            name="Stabilize", inputs=[crop_alpha], xpos=0, ypos=180,
+            name="Stabilize", inputs=[plate], xpos=0, ypos=180,
             filter="impulse", label="lock bbox centre")
 
         crop = nuke.nodes.Crop(
@@ -782,10 +762,10 @@ def _build_internals(group):
             crop=True, reformat=True, label="[value parent.res_w] x [value parent.res_h]")
 
         # --- uncrop branch ----------------------------------------------------
-        # The exact inverse of the crop, and nothing else. No compositing here:
-        # the output is the patch back at its original position in a plate-sized
-        # frame, with the matte in alpha, so the artist merges it downstream
-        # however the shot needs.
+        # The exact inverse of the crop, and nothing else. No compositing and no
+        # matte: the output is the patch back at its original position in a
+        # plate-sized frame, so the artist merges it downstream however the shot
+        # needs.
         place = nuke.nodes.Transform(
             name="ResultPlace", inputs=[result], xpos=400, ypos=180,
             filter="impulse", label="back into stabilized space")
@@ -794,46 +774,19 @@ def _build_internals(group):
             name="Matchmove", inputs=[place], xpos=400, ypos=260,
             filter="impulse", label="back into plate space")
 
-        # Which matte travels in the uncrop's alpha. Already in plate space, so
-        # it needs no round trip of its own.
-        matte_source = nuke.nodes.Switch(
-            name="MatteSource", inputs=[roto, plate], xpos=250, ypos=280)
-        matte_source["which"].setExpression("parent.plate_alpha")
-
-        matte_apply = nuke.nodes.Copy(
-            name="MatteApply", inputs=[matchmove, matte_source],
-            xpos=400, ypos=340, label="matte into alpha")
-        matte_apply["from0"].setValue("rgba.alpha")
-        matte_apply["to0"].setValue("rgba.alpha")
-
         # The result input carries the crop's format, so without this the
         # uncrop would come out crop-sized with the pixels merely offset.
         # _apply sets the box to the analyzed plate size.
         frame = nuke.nodes.Crop(
-            name="PlateFrame", inputs=[matte_apply], xpos=400, ypos=400,
+            name="PlateFrame", inputs=[matchmove], xpos=400, ypos=340,
             crop=True, reformat=True, label="back to plate format")
 
         # --- output -----------------------------------------------------------
         mode_switch = nuke.nodes.Switch(
-            name="OutSwitch", inputs=[crop, frame], xpos=0, ypos=470)
+            name="OutSwitch", inputs=[crop, frame], xpos=0, ypos=440)
         mode_switch["which"].setExpression("parent.mode")
 
-        # alpha_only = 1 pushes the matte into rgb so the same Write renders a
-        # black and white mask. Downstream of the mode switch, so it works in
-        # both modes. Copy rather than Shuffle because Copy's knob names have
-        # been stable across versions and we already rely on them.
-        matte_out = nuke.nodes.Copy(
-            name="MatteOut", inputs=[mode_switch, mode_switch], xpos=150, ypos=530)
-        for index, channel in enumerate(("red", "green", "blue")):
-            matte_out["from{}".format(index)].setValue("rgba.alpha")
-            matte_out["to{}".format(index)].setValue("rgba.{}".format(channel))
-
-        alpha_switch = nuke.nodes.Switch(
-            name="AlphaOnlySwitch", inputs=[mode_switch, matte_out],
-            xpos=0, ypos=590)
-        alpha_switch["which"].setExpression("parent.alpha_only")
-
-        nuke.nodes.Output(inputs=[alpha_switch], xpos=0, ypos=650)
+        nuke.nodes.Output(inputs=[mode_switch], xpos=0, ypos=510)
     finally:
         group.end()
 

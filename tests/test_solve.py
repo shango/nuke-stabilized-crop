@@ -318,6 +318,95 @@ check("__version__ is a semver triple",
 check("version label is what gets stamped on a node",
       sc._version_label() == "StabilizedCrop v" + sc.__version__, sc._version_label())
 
+# --- 11. the internal tree has exactly two purposes -------------------------
+# The node's whole contract: crop and uncrop, nothing else. The roto exists to
+# be sampled by Analyze and must not reach the picture at all. Building the tree
+# against fake nodes catches a matte creeping back in without needing Nuke.
+
+
+class AnyKnob(object):
+    """Swallows whatever _build_internals sets on a knob."""
+
+    def __init__(self):
+        self.expression = None
+
+    def setValue(self, *args):
+        pass
+
+    def setExpression(self, expression):
+        self.expression = expression
+
+
+class Internal(object):
+    def __init__(self, klass, name=None, inputs=(), **kwargs):
+        self.klass = klass
+        self._name = name
+        self.inputs = list(inputs)
+        self._knobs = {}
+
+    def name(self):
+        return self._name
+
+    def __getitem__(self, key):
+        return self._knobs.setdefault(key, AnyKnob())
+
+
+class NodeFactory(object):
+    """Stands in for nuke.nodes, recording everything built."""
+
+    def __init__(self):
+        self.created = []
+
+    def __getattr__(self, klass):
+        def make(**kwargs):
+            node = Internal(klass, **kwargs)
+            self.created.append(node)
+            return node
+        return make
+
+
+factory = NodeFactory()
+nuke_stub.nodes = factory
+sc._build_internals(types.SimpleNamespace(begin=lambda: None, end=lambda: None))
+
+built = factory.created
+by_name = {n.name(): n for n in built if n.name()}
+roto_input = by_name.get("roto")
+check("the roto input still exists", roto_input is not None,
+      "inputs: {}".format(sorted(n.name() for n in built if n.klass == "Input")))
+check("nothing reads the roto input",
+      all(roto_input not in n.inputs for n in built),
+      "read by: {}".format([n.name() for n in built if roto_input in n.inputs]))
+
+# a Copy is how a matte gets into alpha, so there should be none left
+check("no matte plumbing in the tree",
+      [n.klass for n in built if n.klass == "Copy"] == [],
+      "copies: {}".format([n.name() for n in built if n.klass == "Copy"]))
+
+# both branches must actually reach the output, through the mode switch alone
+out = [n for n in built if n.klass == "Output"][0]
+
+
+def ancestry(node, seen=None):
+    seen = set() if seen is None else seen
+    for parent in node.inputs:
+        if id(parent) not in seen:
+            seen.add(id(parent))
+            ancestry(parent, seen)
+    return seen
+
+
+reachable = {id(n) for n in built if id(n) in ancestry(out)}
+for required in ("plate", "result", "Stabilize", "CropWindow", "Matchmove", "PlateFrame"):
+    check("output reaches {}".format(required), id(by_name[required]) in reachable)
+
+switches = [n for n in built if n.klass == "Switch"]
+check("mode is the only switch", len(switches) == 1,
+      "switches: {}".format([n.name() for n in switches]))
+check("the switch is driven by the mode knob",
+      switches[0]["which"].expression == "parent.mode",
+      repr(switches[0]["which"].expression))
+
 print()
 if failures:
     print("{} FAILURE(S):".format(len(failures)))
